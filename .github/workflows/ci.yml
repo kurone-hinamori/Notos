@@ -1,9 +1,10 @@
 name: CI
 
+# リリース用のタグ push では release.yml が同じ検証を含めてビルドするため、
+# main への push では実行せず、プルリクエストの検証のみ行う。
 on:
-  push:
-    branches: [main]
   pull_request:
+  workflow_dispatch:
 
 jobs:
   check:

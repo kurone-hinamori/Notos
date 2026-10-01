@@ -1,4 +1,6 @@
 import { useEffect, useState } from "react";
+import { getVersion } from "@tauri-apps/api/app";
+import { getCurrentWindow } from "@tauri-apps/api/window";
 import type { Settings, Story } from "./types";
 import { loadSettings, persistSettings } from "./lib/storage";
 import { useStoryManager } from "./hooks";
@@ -21,6 +23,13 @@ export default function App() {
   const mgr = useStoryManager(settings);
 
   useEffect(() => persistSettings(settings), [settings]);
+
+  // タイトルバーにバージョンを表示する
+  useEffect(() => {
+    getVersion()
+      .then((v) => getCurrentWindow().setTitle(`Notos v${v}`))
+      .catch(() => undefined);
+  }, []);
 
   const openStory = async (id: string, tab?: string) => {
     setLoadError("");
