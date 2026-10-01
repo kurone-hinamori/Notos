@@ -1,6 +1,6 @@
 [package]
 name = "notos"
-version = "0.1.0"
+version = "0.1.1"
 description = "ローカルLLMで日本語の物語を生成するデスクトップアプリ"
 authors = ["kurone-hinamori"]
 edition = "2021"
@@ -20,7 +20,7 @@ tauri-build = { version = "2", features = [] }
 tauri = { version = "2", features = [] }
 tauri-plugin-dialog = "2"
 tauri-plugin-fs = "2"
-tauri-plugin-http = "2"
+tauri-plugin-http = { version = "2", features = ["unsafe-headers"] }
 tauri-plugin-process = "2"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"

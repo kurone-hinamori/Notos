@@ -18,8 +18,20 @@ export interface ChatOptions {
 
 const base = (s: Pick<Settings, "ollamaUrl">) => s.ollamaUrl.replace(/\/+$/, "");
 
+/**
+ * Ollama は Origin ヘッダーを検査し、許可リストにないオリジン(アプリの tauri.localhost)を 403 で拒否する。
+ * Ollama 自身のオリジンを名乗ることで、環境変数 OLLAMA_ORIGINS の設定なしで接続できるようにする。
+ */
+function originHeader(s: Pick<Settings, "ollamaUrl">): Record<string, string> {
+  try {
+    return { Origin: new URL(base(s)).origin };
+  } catch {
+    return {};
+  }
+}
+
 export async function listModels(s: Pick<Settings, "ollamaUrl">): Promise<string[]> {
-  const res = await fetch(`${base(s)}/api/tags`);
+  const res = await fetch(`${base(s)}/api/tags`, { headers: originHeader(s) });
   if (!res.ok) throw new Error(`Ollama に接続できません (HTTP ${res.status})`);
   const data = (await res.json()) as { models?: { name: string }[] };
   return (data.models ?? []).map((m) => m.name);
@@ -34,7 +46,7 @@ export async function chat(s: Settings, opts: ChatOptions): Promise<string> {
   if (!s.model) throw new Error("モデルが選択されていません。設定画面でモデルを選んでください。");
   const res = await fetch(`${base(s)}/api/chat`, {
     method: "POST",
-    headers: { "Content-Type": "application/json" },
+    headers: { "Content-Type": "application/json", ...originHeader(s) },
     signal: opts.signal,
     body: JSON.stringify({
       model: s.model,
