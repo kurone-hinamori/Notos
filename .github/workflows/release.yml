@@ -1,0 +1,46 @@
+name: Release
+
+# v* タグを push すると、Windows 向けインストーラーをビルドして GitHub Releases に公開する。
+# 同時に自動アップデート用の latest.json も添付され、既存ユーザーのアプリが更新を検知する。
+on:
+  push:
+    tags:
+      - "v*"
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      - uses: swatinem/rust-cache@v2
+        with:
+          workspaces: src-tauri
+
+      - run: npm ci
+
+      - run: npm run typecheck
+
+      - uses: tauri-apps/tauri-action@v0
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
+        with:
+          tagName: ${{ github.ref_name }}
+          releaseName: "Notos ${{ github.ref_name }}"
+          releaseBody: "Windows 版インストーラーです。インストール済みの場合は、アプリ起動時に更新が案内されます。"
+          releaseDraft: false
+          prerelease: false
+          includeUpdaterJson: true

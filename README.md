@@ -1,0 +1,62 @@
+# Notos
+
+ローカルLLM(Ollama)を使って、日本語のライトノベル風の物語を丸ごと 1 冊分生成する Windows デスクトップアプリです。
+
+- 技術構成: Tauri 2 + React 19 + TypeScript 7
+- 実行ファイル: `notos.exe`
+- 前提: `http://127.0.0.1:11434` で Ollama が動作していること
+
+## 機能
+
+| 機能 | 内容 |
+| --- | --- |
+| 新規作成(ガチャ) | キーワードを指定すると、タイトル・あらすじ・登場人物の案を提示。気に入るまで何度でも引き直せる |
+| 本文の自動生成 | 設定資料 → 章構成 → 場面ごとの執筆。デフォルトは 12 章 × 4 場面 × 約 2,000 字(文庫本 1 冊分、約 10 万字) |
+| 設定資料 | 登場人物・地名・重要な品物・用語・世界観・年表を別途作成。執筆した各章から新事実を設定資料へ自動反映 |
+| 校閲・整合性 | 誤字脱字・文法の校閲、設定資料との矛盾点検(該当箇所を自動修正、修正できないものは指摘として表示) |
+| 一覧・詳細・編集 | 作成済みの物語を一覧し、概要・本文・設定資料を直接編集可能(自動保存) |
+| EPUB 出力 | 縦書き・右開きの EPUB 3(巻末に設定資料を付けることも可能) |
+| 表紙・口絵・挿絵 | 別アプリとの連携を予定(現在は準備中) |
+| 自動アップデート | 起動時に GitHub Releases を確認し、新版があれば更新を案内 |
+
+物語は `%APPDATA%\io.github.kurone-hinamori.notos\stories\` に JSON で保存されます。
+
+## 使い方
+
+1. [Releases](https://github.com/kurone-hinamori/Notos/releases) からインストーラーを入手してインストール
+2. Ollama を起動し、モデルを用意しておく(例: `ollama pull qwen3`)
+3. Notos の「設定」で使用するモデルと筆名を選ぶ
+4. 「新しい物語」でキーワードを入れてガチャを引き、気に入った案で「この内容で物語を作る」
+5. 「制作」タブで「本文の作成を始める」。途中で止めても続きから再開できます
+
+> 長編の生成には、モデルとマシンによっては数時間〜十数時間かかります。日本語が得意な 20B 以上のモデルを推奨します。
+> 設定の「コンテキスト長」は 16,384 以上を推奨します。
+
+## 開発
+
+```bash
+npm install
+npm run tauri dev      # 開発起動
+npm run tauri build    # インストーラー作成
+```
+
+必要なもの: Node.js 22+, Rust (stable), WebView2。
+
+## リリースと自動アップデート
+
+`v*` タグを push すると GitHub Actions(`.github/workflows/release.yml`)が Windows 版をビルドし、
+署名付きインストーラーと `latest.json` を Releases に公開します。
+
+```bash
+# package.json / src-tauri/tauri.conf.json / src-tauri/Cargo.toml のバージョンを上げてから
+git tag v0.1.1
+git push origin v0.1.1
+```
+
+リポジトリのシークレットに更新署名用の鍵が必要です(`TAURI_SIGNING_PRIVATE_KEY`、パスワードを設定した場合は `TAURI_SIGNING_PRIVATE_KEY_PASSWORD`)。
+鍵は `npx tauri signer generate -w ~/.tauri/notos.key` で作成し、公開鍵を `tauri.conf.json` の `plugins.updater.pubkey` に設定します。
+**秘密鍵はリポジトリにコミットしないでください。紛失すると既存ユーザーへ更新を配信できなくなります。**
+
+## ライセンス
+
+MIT
