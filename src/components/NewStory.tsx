@@ -3,6 +3,11 @@ import type { Concept, Settings, Story } from "../types";
 import { pullConcept } from "../lib/pipeline";
 import { createStory } from "../lib/storage";
 
+/** 前後の空白を除き、空欄と重複を取り除く。 */
+function cleanKeywords(list: string[]): string[] {
+  return [...new Set(list.map((k) => k.trim()).filter(Boolean))];
+}
+
 interface Pull {
   concept: Concept;
   keywords: string[];
@@ -20,21 +25,17 @@ export function NewStory(props: { settings: Settings; onCreate: (s: Story) => Pr
   const abort = useRef<AbortController | null>(null);
 
   const addKeywords = (text: string) => {
-    const add = text
-      .split(/[,、，\s]+/)
-      .map((k) => k.trim())
-      .filter((k) => k && !keywords.includes(k));
-    if (add.length) setKeywords([...keywords, ...add]);
+    setKeywords(cleanKeywords([...keywords, ...text.split(/[,、，\s]+/)]));
     setDraft("");
   };
 
   const pull = async () => {
-    const kws = draft.trim() ? [...keywords, ...draft.split(/[,、，\s]+/).filter(Boolean)] : keywords;
+    const kws = cleanKeywords([...keywords, ...draft.split(/[,、，\s]+/)]);
     if (!kws.length) {
       setError("キーワードを1つ以上入力してください");
       return;
     }
-    setKeywords([...new Set(kws)]);
+    setKeywords(kws);
     setDraft("");
     setError("");
     setBusy(true);
@@ -42,13 +43,13 @@ export function NewStory(props: { settings: Settings; onCreate: (s: Story) => Pr
     try {
       const concept = await pullConcept(
         settings,
-        [...new Set(kws)],
+        kws,
         note,
         pulls.slice(0, 8).map((p) => p.concept.title),
         abort.current.signal,
       );
       if (!concept.title || !concept.synopsis) throw new Error("うまく生成できませんでした。もう一度引いてください。");
-      setPulls((p) => [{ concept, keywords: [...new Set(kws)] }, ...p]);
+      setPulls((p) => [{ concept, keywords: kws }, ...p]);
       setIndex(0);
     } catch (e) {
       if (!abort.current?.signal.aborted) setError(e instanceof Error ? e.message : String(e));
@@ -68,12 +69,20 @@ export function NewStory(props: { settings: Settings; onCreate: (s: Story) => Pr
       <div className="two-col">
         <section className="card">
           <h3>キーワード</h3>
-          <p className="muted">物語の核にしたい言葉を入力してください(Enter / 読点で追加)。</p>
+          <p className="muted">物語の核にしたい言葉を入力してください(Enter / 読点で追加)。追加したキーワードはクリックして修正でき、修正後にガチャを引き直せます。</p>
           <div className="chips">
-            {keywords.map((k) => (
-              <span key={k} className="chip">
-                {k}
-                <button aria-label={`${k}を削除`} onClick={() => setKeywords(keywords.filter((x) => x !== k))}>
+            {keywords.map((k, i) => (
+              <span key={i} className="chip">
+                <input
+                  className="chip-input"
+                  aria-label={`キーワード ${i + 1}`}
+                  value={k}
+                  size={Math.max(2, k.length * 2)}
+                  onChange={(e) => setKeywords(keywords.map((x, j) => (j === i ? e.target.value : x)))}
+                  onBlur={() => setKeywords(cleanKeywords(keywords))}
+                  onKeyDown={(e) => e.key === "Enter" && (e.currentTarget as HTMLInputElement).blur()}
+                />
+                <button aria-label={`${k}を削除`} onClick={() => setKeywords(keywords.filter((_, j) => j !== i))}>
                   ×
                 </button>
               </span>
