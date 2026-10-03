@@ -3,14 +3,16 @@ import { getVersion } from "@tauri-apps/api/app";
 import { check } from "@tauri-apps/plugin-updater";
 import type { Settings } from "../types";
 import { listModels } from "../lib/ollama";
+import { installUpdate } from "../lib/updater";
 import { Field } from "./ui";
 
-export function SettingsView(props: { settings: Settings; onChange: (s: Settings) => void }) {
+export function SettingsView(props: { settings: Settings; generating: boolean; onChange: (s: Settings) => void }) {
   const { settings, onChange } = props;
   const [models, setModels] = useState<string[]>([]);
   const [status, setStatus] = useState<{ ok: boolean; text: string } | null>(null);
   const [version, setVersion] = useState("");
   const [updateMsg, setUpdateMsg] = useState("");
+  const [updating, setUpdating] = useState(false);
 
   const refresh = async () => {
     setStatus({ ok: true, text: "接続を確認中…" });
@@ -31,13 +33,27 @@ export function SettingsView(props: { settings: Settings; onChange: (s: Settings
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
+  /** 更新を確認し、新しい版があればそのままインストールして再起動する。 */
   const checkUpdate = async () => {
+    setUpdating(true);
     setUpdateMsg("確認中…");
     try {
       const u = await check();
-      setUpdateMsg(u ? `新しいバージョン ${u.version} があります(起動時のバナーから更新できます)` : "最新版です");
+      if (!u) {
+        setUpdateMsg("最新版です");
+        return;
+      }
+      if (props.generating) {
+        setUpdateMsg(`新しいバージョン ${u.version} があります。物語の生成中は再起動できないため、生成を止めてからもう一度お試しください。`);
+        return;
+      }
+      setUpdateMsg(`新しいバージョン ${u.version} をダウンロード中… 0%`);
+      await installUpdate(u, (p) => setUpdateMsg(`新しいバージョン ${u.version} をダウンロード中… ${p}%`));
+      setUpdateMsg("更新しました。再起動します…");
     } catch (e) {
-      setUpdateMsg(`確認できませんでした:${e instanceof Error ? e.message : e}`);
+      setUpdateMsg(`更新できませんでした:${e instanceof Error ? e.message : e}`);
+    } finally {
+      setUpdating(false);
     }
   };
 
@@ -88,7 +104,9 @@ export function SettingsView(props: { settings: Settings; onChange: (s: Settings
         <h3>アプリについて</h3>
         <p className="muted">Notos {version && `v${version}`}</p>
         <div className="row">
-          <button onClick={() => void checkUpdate()}>更新を確認</button>
+          <button disabled={updating} onClick={() => void checkUpdate()}>
+            更新を確認してインストール
+          </button>
           <span className="muted">{updateMsg}</span>
         </div>
       </section>

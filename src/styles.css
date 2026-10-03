@@ -167,7 +167,7 @@ details > summary { cursor: pointer; padding: 4px 0; }
   white-space: pre-wrap; max-height: 260px; overflow: auto; margin: 6px 0 0; font-family: inherit;
   line-height: 1.8; color: var(--muted);
 }
-.log { margin: 4px 0 0; padding-left: 18px; max-height: 200px; overflow: auto; color: var(--muted); font-size: 12px; }
+.log { margin: 4px 0 0; padding-left: 18px; max-height: 360px; overflow: auto; color: var(--muted); font-size: 12px; font-variant-numeric: tabular-nums; white-space: pre-wrap; }
 
 .editor { display: grid; grid-template-columns: 240px minmax(0, 1fr); gap: 16px; align-items: start; }
 .chapter-list { display: flex; flex-direction: column; gap: 4px; position: sticky; top: 8px; max-height: calc(100vh - 160px); overflow: auto; }

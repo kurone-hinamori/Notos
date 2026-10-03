@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import type { Story } from "../../types";
 import type { Task } from "../../lib/pipeline";
 import type { Mutate } from "../StoryDetail";
@@ -9,6 +9,11 @@ export function BodyTab(props: { story: Story; mutate: Mutate; start: (t: Task) 
   const [index, setIndex] = useState(0);
   const ci = Math.min(index, Math.max(0, story.chapters.length - 1));
   const ch = story.chapters[ci];
+
+  // 章を切り替えたら、ページ全体のスクロールを先頭に戻す(本文欄は key で作り直されて先頭になる)
+  useEffect(() => {
+    document.querySelector(".main")?.scrollTo({ top: 0 });
+  }, [ci]);
 
   if (!ch) {
     return <p className="muted">まだ本文がありません。「制作」タブから作成を始めてください。</p>;
@@ -57,6 +62,7 @@ export function BodyTab(props: { story: Story; mutate: Mutate; start: (t: Task) 
         </details>
 
         <textarea
+          key={ci}
           className="body-editor"
           value={ch.body}
           placeholder="(この章の本文はまだありません)"

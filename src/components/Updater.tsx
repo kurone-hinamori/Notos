@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
 import { check, type Update } from "@tauri-apps/plugin-updater";
-import { relaunch } from "@tauri-apps/plugin-process";
+import { installUpdate } from "../lib/updater";
 
 type State =
   | { kind: "idle" }
@@ -23,18 +23,9 @@ export function UpdateBanner() {
   if (state.kind === "idle") return null;
 
   const install = async (update: Update) => {
-    let total = 0;
-    let done = 0;
     setState({ kind: "downloading", percent: 0 });
     try {
-      await update.downloadAndInstall((ev) => {
-        if (ev.event === "Started") total = ev.data.contentLength ?? 0;
-        if (ev.event === "Progress") {
-          done += ev.data.chunkLength;
-          setState({ kind: "downloading", percent: total ? Math.round((done / total) * 100) : 0 });
-        }
-      });
-      await relaunch();
+      await installUpdate(update, (percent) => setState({ kind: "downloading", percent }));
     } catch (e) {
       setState({ kind: "error", message: e instanceof Error ? e.message : String(e) });
     }

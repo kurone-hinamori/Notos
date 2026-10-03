@@ -100,7 +100,7 @@ export default function App() {
         {loadError && <p className="error">{loadError}</p>}
         {view.name === "list" && <StoryList onOpen={(id, tab) => void openStory(id, tab)} onNew={() => void go({ name: "new" })} />}
         {view.name === "new" && <NewStory settings={settings} onCreate={create} />}
-        {view.name === "settings" && <SettingsView settings={settings} onChange={setSettings} />}
+        {view.name === "settings" && <SettingsView settings={settings} generating={mgr.run.running} onChange={setSettings} />}
         {view.name === "detail" && mgr.story && mgr.story.id === view.id && (
           <StoryDetail
             key={mgr.story.id}

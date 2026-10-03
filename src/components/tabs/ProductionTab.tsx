@@ -96,7 +96,7 @@ export function ProductionTab(props: {
           </div>
         )}
         {mine && run.logs.length > 0 && (
-          <details open={!running}>
+          <details open>
             <summary>ログ</summary>
             <ul className="log">
               {run.logs

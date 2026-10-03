@@ -12,6 +12,16 @@ export interface RunState {
   error: string;
 }
 
+const clock = (d: Date) => d.toLocaleTimeString("ja-JP", { hour12: false });
+
+function duration(ms: number): string {
+  const s = Math.round(ms / 1000);
+  if (s < 60) return `${s}秒`;
+  const m = Math.floor(s / 60);
+  if (m < 60) return `${m}分${s % 60}秒`;
+  return `${Math.floor(m / 60)}時間${m % 60}分`;
+}
+
 const IDLE: RunState = { storyId: null, running: false, stage: "", stream: "", logs: [], error: "" };
 
 /**
@@ -82,28 +92,44 @@ export function useStoryManager(settings: Settings) {
       const controller = new AbortController();
       abort.current = controller;
       setRun({ ...IDLE, storyId, running: true, stage: "準備中" });
+
+      // ログには時刻を付け、工程ごとの所要時間も記録する(どこに時間がかかるかを調べるため)
+      const pushLog = (msg: string) =>
+        setRun((r) => ({ ...r, logs: [...r.logs.slice(-999), `${clock(new Date())}  ${msg}`] }));
+      let stageLabel = "";
+      let stageStart = Date.now();
+      const endStage = () => {
+        if (stageLabel && stageLabel !== "完了") pushLog(`${stageLabel}  [所要 ${duration(Date.now() - stageStart)}]`);
+        stageLabel = "";
+      };
+      const taskStart = Date.now();
+      pushLog("開始");
+
       const ctx: Ctx = {
         settings: settingsRef.current,
         signal: controller.signal,
         get: () => ref.current!,
         update: (m) => mutate(m),
-        stage: (label) => setRun((r) => ({ ...r, stage: label, stream: "" })),
+        stage: (label) => {
+          endStage();
+          stageLabel = label;
+          stageStart = Date.now();
+          setRun((r) => ({ ...r, stage: label, stream: "" }));
+        },
         stream: (text) => setRun((r) => ({ ...r, stream: text })),
-        log: (msg) => setRun((r) => ({ ...r, logs: [...r.logs.slice(-199), msg] })),
+        log: pushLog,
       };
       try {
         await runTask(ctx, task);
+        endStage();
+        pushLog(`終了  [合計 ${duration(Date.now() - taskStart)}]`);
         setRun((r) => ({ ...r, running: false, stream: "", stage: r.stage === "完了" ? "完了" : "" }));
       } catch (e) {
         const aborted = controller.signal.aborted;
-        setRun((r) => ({
-          ...r,
-          running: false,
-          stream: "",
-          stage: "",
-          error: aborted ? "" : e instanceof Error ? e.message : String(e),
-          logs: aborted ? [...r.logs, "中断しました(続きから再開できます)"] : r.logs,
-        }));
+        const message = e instanceof Error ? e.message : String(e);
+        endStage();
+        pushLog(`${aborted ? "中断しました(続きから再開できます)" : `エラー:${message}`}  [合計 ${duration(Date.now() - taskStart)}]`);
+        setRun((r) => ({ ...r, running: false, stream: "", stage: "", error: aborted ? "" : message }));
       } finally {
         abort.current = null;
         await flush();
