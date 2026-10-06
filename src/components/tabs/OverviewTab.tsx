@@ -16,6 +16,13 @@ export function OverviewTab({ story, mutate }: { story: Story; mutate: Mutate })
             onChange={(v) => mutate((s) => void (s.keywords = v.split(/[,、，]+/).map((k) => k.trim()).filter(Boolean)))}
           />
         </div>
+        <Field
+          label="補足の希望(ガチャ用。「複製してガチャからやり直す」で引き継がれます)"
+          rows={2}
+          value={story.note ?? ""}
+          placeholder="例:主人公は女性、切ないが最後は救いのある結末に"
+          onChange={(v) => mutate((s) => void (s.note = v))}
+        />
         <Field label="あらすじ" rows={8} value={story.synopsis} onChange={(v) => mutate((s) => void (s.synopsis = v))} />
       </Section>
 
