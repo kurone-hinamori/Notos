@@ -32,6 +32,7 @@ export function StoryDetail(props: {
   start: (t: Task) => void;
   stop: () => void;
   onBack: () => void;
+  onDuplicate: () => void;
 }) {
   const { story, run, mutate } = props;
   const [tab, setTab] = useState<TabId>(
@@ -54,7 +55,15 @@ export function StoryDetail(props: {
             {story.chapters.length ? `${story.chapters.length}章 / ${storyChars(story).toLocaleString()}字` : "本文は未作成"}
           </span>
         </div>
-        {running && <span className="running">● 生成中:{run.stage}</span>}
+        <div className="row">
+          {running && <span className="running">● 生成中:{run.stage}</span>}
+          <button
+            title="この物語の企画を複製し、キーワードを修正してガチャからやり直します。元の物語は残ります。"
+            onClick={props.onDuplicate}
+          >
+            複製してガチャからやり直す
+          </button>
+        </div>
       </header>
 
       <nav className="tabs">

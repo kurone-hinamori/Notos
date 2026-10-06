@@ -2,17 +2,17 @@ import { useEffect, useState } from "react";
 import { getVersion } from "@tauri-apps/api/app";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import type { Settings, Story } from "./types";
-import { loadSettings, persistSettings } from "./lib/storage";
+import { loadSettings, loadStory, persistSettings } from "./lib/storage";
 import { useStoryManager } from "./hooks";
 import { StoryList } from "./components/StoryList";
-import { NewStory } from "./components/NewStory";
+import { NewStory, type Seed } from "./components/NewStory";
 import { StoryDetail } from "./components/StoryDetail";
 import { SettingsView } from "./components/SettingsView";
 import { UpdateBanner } from "./components/Updater";
 
 type View =
   | { name: "list" }
-  | { name: "new" }
+  | { name: "new"; seed?: Seed }
   | { name: "settings" }
   | { name: "detail"; id: string; tab?: string };
 
@@ -44,6 +44,26 @@ export default function App() {
   const go = async (v: View) => {
     if (!mgr.run.running) await mgr.close();
     setView(v);
+  };
+
+  /** 物語の企画(キーワード・概要)を複製して、新規作成画面からやり直す。元の物語は変更しない。 */
+  const duplicate = async (id: string) => {
+    setLoadError("");
+    try {
+      await mgr.flush();
+      const s = await loadStory(id);
+      await go({
+        name: "new",
+        seed: {
+          title: s.title,
+          keywords: s.keywords,
+          note: s.note ?? "",
+          concept: { title: s.title, tagline: s.tagline, genre: s.genre, synopsis: s.synopsis, characters: s.characters },
+        },
+      });
+    } catch (e) {
+      setLoadError(`複製できませんでした:${e instanceof Error ? e.message : String(e)}`);
+    }
   };
 
   const create = async (s: Story) => {
@@ -98,8 +118,8 @@ export default function App() {
           </p>
         )}
         {loadError && <p className="error">{loadError}</p>}
-        {view.name === "list" && <StoryList onOpen={(id, tab) => void openStory(id, tab)} onNew={() => void go({ name: "new" })} />}
-        {view.name === "new" && <NewStory settings={settings} onCreate={create} />}
+        {view.name === "list" && <StoryList onOpen={(id, tab) => void openStory(id, tab)} onDuplicate={(id) => void duplicate(id)} onNew={() => void go({ name: "new" })} />}
+        {view.name === "new" && <NewStory key={view.seed?.title ?? "blank"} settings={settings} seed={view.seed} onCreate={create} />}
         {view.name === "settings" && <SettingsView settings={settings} generating={mgr.run.running} onChange={setSettings} />}
         {view.name === "detail" && mgr.story && mgr.story.id === view.id && (
           <StoryDetail
@@ -112,6 +132,7 @@ export default function App() {
             start={(t) => void mgr.start(t)}
             stop={mgr.stop}
             onBack={() => void go({ name: "list" })}
+            onDuplicate={() => void duplicate(mgr.story!.id)}
           />
         )}
       </main>

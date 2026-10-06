@@ -8,7 +8,7 @@ export const loadStory = (id: string) => invoke<Story>("load_story", { id });
 export const saveStory = (story: Story) => invoke<void>("save_story", { story });
 export const deleteStory = (id: string) => invoke<void>("delete_story", { id });
 
-export function createStory(concept: Concept, keywords: string[], author: string): Story {
+export function createStory(concept: Concept, keywords: string[], author: string, note = ""): Story {
   const now = new Date().toISOString();
   return {
     version: 1,
@@ -16,6 +16,7 @@ export function createStory(concept: Concept, keywords: string[], author: string
     createdAt: now,
     updatedAt: now,
     keywords,
+    note,
     title: concept.title,
     tagline: concept.tagline,
     genre: concept.genre,

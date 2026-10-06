@@ -3,7 +3,11 @@ import type { StorySummary } from "../types";
 import { deleteStory, listStories } from "../lib/storage";
 import { StatusBadge, formatDate } from "./ui";
 
-export function StoryList(props: { onOpen: (id: string, tab?: string) => void; onNew: () => void }) {
+export function StoryList(props: {
+  onOpen: (id: string, tab?: string) => void;
+  onNew: () => void;
+  onDuplicate: (id: string) => void;
+}) {
   const [items, setItems] = useState<StorySummary[] | null>(null);
   const [error, setError] = useState("");
   const [query, setQuery] = useState("");
@@ -77,6 +81,16 @@ export function StoryList(props: { onOpen: (id: string, tab?: string) => void; o
                   }}
                 >
                   編集
+                </button>
+                <button
+                  className="small"
+                  title="キーワードを修正して、ガチャからやり直す(元の物語は残ります)"
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    props.onDuplicate(s.id);
+                  }}
+                >
+                  複製
                 </button>
                 <button
                   className="small danger"

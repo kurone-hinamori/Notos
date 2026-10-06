@@ -11,14 +11,27 @@ function cleanKeywords(list: string[]): string[] {
 interface Pull {
   concept: Concept;
   keywords: string[];
+  note: string;
+  /** 複製元の物語の案 */
+  origin?: boolean;
 }
 
-export function NewStory(props: { settings: Settings; onCreate: (s: Story) => Promise<void> }) {
-  const { settings } = props;
-  const [keywords, setKeywords] = useState<string[]>([]);
+/** 既存の物語を複製してやり直すときの、引き継ぎ内容。 */
+export interface Seed {
+  title: string;
+  keywords: string[];
+  note: string;
+  concept: Concept;
+}
+
+export function NewStory(props: { settings: Settings; seed?: Seed; onCreate: (s: Story) => Promise<void> }) {
+  const { settings, seed } = props;
+  const [keywords, setKeywords] = useState<string[]>(seed?.keywords ?? []);
   const [draft, setDraft] = useState("");
-  const [note, setNote] = useState("");
-  const [pulls, setPulls] = useState<Pull[]>([]);
+  const [note, setNote] = useState(seed?.note ?? "");
+  const [pulls, setPulls] = useState<Pull[]>(
+    seed ? [{ concept: seed.concept, keywords: seed.keywords, note: seed.note, origin: true }] : [],
+  );
   const [index, setIndex] = useState(0);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
@@ -49,7 +62,7 @@ export function NewStory(props: { settings: Settings; onCreate: (s: Story) => Pr
         abort.current.signal,
       );
       if (!concept.title || !concept.synopsis) throw new Error("うまく生成できませんでした。もう一度引いてください。");
-      setPulls((p) => [{ concept, keywords: kws }, ...p]);
+      setPulls((p) => [{ concept, keywords: kws, note }, ...p]);
       setIndex(0);
     } catch (e) {
       if (!abort.current?.signal.aborted) setError(e instanceof Error ? e.message : String(e));
@@ -64,8 +77,13 @@ export function NewStory(props: { settings: Settings; onCreate: (s: Story) => Pr
   return (
     <div className="page">
       <header className="page-head">
-        <h2>新しい物語</h2>
+        <h2>{seed ? "複製してやり直す" : "新しい物語"}</h2>
       </header>
+      {seed && (
+        <p className="notice">
+          「{seed.title}」の企画を複製しました。キーワードを修正してガチャを引き直せます。気に入った案で登録すると新しい物語として保存され、元の物語は変更されません。
+        </p>
+      )}
       <div className="two-col">
         <section className="card">
           <h3>キーワード</h3>
@@ -125,6 +143,7 @@ export function NewStory(props: { settings: Settings; onCreate: (s: Story) => Pr
                 {pulls.map((p, i) => (
                   <li key={i}>
                     <button className={i === index ? "active" : ""} onClick={() => setIndex(i)}>
+                      {p.origin && "【元の案】"}
                       {p.concept.title}
                     </button>
                   </li>
@@ -156,7 +175,7 @@ export function NewStory(props: { settings: Settings; onCreate: (s: Story) => Pr
               <div className="row">
                 <button
                   className="primary big"
-                  onClick={() => void props.onCreate(createStory(current.concept, current.keywords, settings.author))}
+                  onClick={() => void props.onCreate(createStory(current.concept, current.keywords, settings.author, current.note))}
                 >
                   この内容で物語を作る →
                 </button>

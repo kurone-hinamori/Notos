@@ -85,6 +85,8 @@ export interface Story {
   createdAt: string;
   updatedAt: string;
   keywords: string[];
+  /** ガチャを引いたときの補足の希望 */
+  note?: string;
   title: string;
   tagline: string;
   genre: string;
