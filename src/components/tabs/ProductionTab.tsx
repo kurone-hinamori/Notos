@@ -39,6 +39,7 @@ export function ProductionTab(props: {
   const proofread = story.chapters.filter((c) => c.proofread).length;
   const hasStarted = story.bible.generated || story.chapters.length > 0;
   const locked = running || props.disabled;
+  const short = story.form === "short";
 
   const steps: [string, boolean, string][] = [
     ["設定資料", story.bible.generated, story.bible.generated ? "作成済み" : "未作成"],
@@ -49,16 +50,25 @@ export function ProductionTab(props: {
 
   return (
     <div className="stack">
-      <Section title="本の規模">
+      <Section title={short ? "この話の規模" : "本の規模"}>
         <div className="three-col">
-          <NumberField label="章の数" value={plan.chapters} min={3} max={30} disabled={locked} onChange={(n) => mutate((s) => void (s.plan.chapters = n))} />
-          <NumberField label="1章あたりの場面数" value={plan.scenes} min={2} max={8} disabled={locked} onChange={(n) => mutate((s) => void (s.plan.scenes = n))} />
+          {!short && (
+            <NumberField label="章の数" value={plan.chapters} min={3} max={30} disabled={locked} onChange={(n) => mutate((s) => void (s.plan.chapters = n))} />
+          )}
+          <NumberField label={short ? "場面数" : "1章あたりの場面数"} value={plan.scenes} min={2} max={8} disabled={locked} onChange={(n) => mutate((s) => void (s.plan.scenes = n))} />
           <NumberField label="1場面の文字数(目安)" value={plan.charsPerScene} min={600} max={4000} step={100} disabled={locked} onChange={(n) => mutate((s) => void (s.plan.charsPerScene = n))} />
         </div>
-        <p className="muted">
-          目標の長さ:約 {total.toLocaleString()} 字(文庫本1冊は約8〜10万字)。現在 {storyChars(story).toLocaleString()} 字。
-          章の数と場面数は、次に章構成を作成(作り直し)するときに反映されます。
-        </p>
+        {short ? (
+          <p className="muted">
+            目標の長さ:約 {total.toLocaleString()} 字(1話完結)。現在 {storyChars(story).toLocaleString()} 字。
+            場面数は、次に構成を作成(作り直し)するときに反映されます。
+          </p>
+        ) : (
+          <p className="muted">
+            目標の長さ:約 {total.toLocaleString()} 字(文庫本1冊は約8〜10万字)。現在 {storyChars(story).toLocaleString()} 字。
+            章の数と場面数は、次に章構成を作成(作り直し)するときに反映されます。
+          </p>
+        )}
       </Section>
 
       <Section
@@ -85,7 +95,9 @@ export function ProductionTab(props: {
           ))}
         </ol>
         <p className="muted small-text">
-          設定資料 → 章構成 → 場面ごとの執筆(章ごとに設定資料へ反映)→ 校閲・整合性チェックの順に進みます。1冊分の生成には長い時間がかかります。途中で停止しても、進捗は保存され続きから再開できます。
+          {short
+            ? "設定資料 → 構成 → 場面ごとの執筆 → 設定資料への反映 → 校閲・整合性チェックの順に進みます。この話の設定資料だけを参照するので、他の話の内容には影響されません。途中で停止しても、続きから再開できます。"
+            : "設定資料 → 章構成 → 場面ごとの執筆(章ごとに設定資料へ反映)→ 校閲・整合性チェックの順に進みます。1冊分の生成には長い時間がかかります。途中で停止しても、進捗は保存され続きから再開できます。"}
         </p>
 
         {mine && run.error && <p className="error">エラー:{run.error}</p>}

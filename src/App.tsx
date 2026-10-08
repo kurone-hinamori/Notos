@@ -1,12 +1,15 @@
 import { useEffect, useState } from "react";
 import { getVersion } from "@tauri-apps/api/app";
 import { getCurrentWindow } from "@tauri-apps/api/window";
-import type { Settings, Story } from "./types";
+import type { Anthology, Settings, Story } from "./types";
+import { isAnthology } from "./types";
 import { loadSettings, loadStory, persistSettings } from "./lib/storage";
 import { useStoryManager } from "./hooks";
 import { StoryList } from "./components/StoryList";
 import { NewStory, type Seed } from "./components/NewStory";
 import { StoryDetail } from "./components/StoryDetail";
+import { NewAnthology } from "./components/NewAnthology";
+import { AnthologyDetail } from "./components/AnthologyDetail";
 import { SettingsView } from "./components/SettingsView";
 import { UpdateBanner } from "./components/Updater";
 
@@ -14,7 +17,10 @@ type View =
   | { name: "list" }
   | { name: "new"; seed?: Seed }
   | { name: "settings" }
-  | { name: "detail"; id: string; tab?: string };
+  | { name: "detail"; id: string; tab?: string }
+  | { name: "anthologies" }
+  | { name: "anthology-new" }
+  | { name: "anthology"; id: string };
 
 export default function App() {
   const [settings, setSettings] = useState<Settings>(loadSettings);
@@ -41,6 +47,16 @@ export default function App() {
     }
   };
 
+  const openAnthology = async (id: string) => {
+    setLoadError("");
+    try {
+      await mgr.open(id);
+      setView({ name: "anthology", id });
+    } catch (e) {
+      setLoadError(`物語を開けませんでした:${e instanceof Error ? e.message : String(e)}`);
+    }
+  };
+
   const go = async (v: View) => {
     if (!mgr.run.running) await mgr.close();
     setView(v);
@@ -52,6 +68,7 @@ export default function App() {
     try {
       await mgr.flush();
       const s = await loadStory(id);
+      if (isAnthology(s)) return;
       await go({
         name: "new",
         seed: {
@@ -71,6 +88,17 @@ export default function App() {
     setView({ name: "detail", id: s.id, tab: "production" });
   };
 
+  const createAnthology = async (a: Anthology) => {
+    await mgr.adopt(a);
+    setView({ name: "anthology", id: a.id });
+  };
+
+  /** 生成中のドキュメントを開く(サイドバーの「進捗を見る」) */
+  const showRunning = () => {
+    if (mgr.anthology) void openAnthology(mgr.anthology.id);
+    else if (mgr.story) void openStory(mgr.story.id, "production");
+  };
+
   const noModel = !settings.model;
 
   return (
@@ -84,12 +112,21 @@ export default function App() {
           </div>
         </div>
         <nav>
+          <small className="nav-label">長編</small>
           <button className={view.name === "list" || view.name === "detail" ? "active" : ""} onClick={() => void go({ name: "list" })}>
             📚 物語の一覧
           </button>
           <button className={view.name === "new" ? "active" : ""} onClick={() => void go({ name: "new" })}>
             ✨ 新しい物語
           </button>
+          <small className="nav-label">短編集</small>
+          <button className={view.name === "anthologies" || view.name === "anthology" ? "active" : ""} onClick={() => void go({ name: "anthologies" })}>
+            📖 短編集の一覧
+          </button>
+          <button className={view.name === "anthology-new" ? "active" : ""} onClick={() => void go({ name: "anthology-new" })}>
+            ✨ 新しい短編集
+          </button>
+          <small className="nav-label" />
           <button className={view.name === "settings" ? "active" : ""} onClick={() => void go({ name: "settings" })}>
             ⚙ 設定
           </button>
@@ -98,8 +135,8 @@ export default function App() {
           <div className="side-run">
             <div className="running">● 生成中</div>
             <small>{mgr.run.stage}</small>
-            {view.name !== "detail" && mgr.story && (
-              <button className="small" onClick={() => void openStory(mgr.story!.id, "production")}>
+            {view.name !== "detail" && view.name !== "anthology" && mgr.doc && (
+              <button className="small" onClick={showRunning}>
                 進捗を見る
               </button>
             )}
@@ -118,7 +155,24 @@ export default function App() {
           </p>
         )}
         {loadError && <p className="error">{loadError}</p>}
-        {view.name === "list" && <StoryList onOpen={(id, tab) => void openStory(id, tab)} onDuplicate={(id) => void duplicate(id)} onNew={() => void go({ name: "new" })} />}
+        {view.name === "anthologies" && (
+          <StoryList key="anthology" kind="anthology" onOpen={(id) => void openAnthology(id)} onNew={() => void go({ name: "anthology-new" })} />
+        )}
+        {view.name === "anthology-new" && <NewAnthology settings={settings} onCreate={createAnthology} />}
+        {view.name === "anthology" && mgr.anthology && mgr.anthology.id === view.id && (
+          <AnthologyDetail
+            key={mgr.anthology.id}
+            anthology={mgr.anthology}
+            settings={settings}
+            run={mgr.run}
+            mutate={(m) => mgr.mutate((d) => m(d as Anthology))}
+            start={(t, episode) => void mgr.start(t, episode)}
+            execute={(jobs) => void mgr.execute(jobs)}
+            stop={mgr.stop}
+            onBack={() => void go({ name: "anthologies" })}
+          />
+        )}
+        {view.name === "list" && <StoryList key="novel" kind="novel" onOpen={(id, tab) => void openStory(id, tab)} onDuplicate={(id) => void duplicate(id)} onNew={() => void go({ name: "new" })} />}
         {view.name === "new" && <NewStory key={view.seed?.title ?? "blank"} settings={settings} seed={view.seed} onCreate={create} />}
         {view.name === "settings" && <SettingsView settings={settings} generating={mgr.run.running} onChange={setSettings} />}
         {view.name === "detail" && mgr.story && mgr.story.id === view.id && (
@@ -128,7 +182,7 @@ export default function App() {
             settings={settings}
             run={mgr.run}
             initialTab={view.tab}
-            mutate={mgr.mutate}
+            mutate={(m) => mgr.mutate((d) => m(d as Story))}
             start={(t) => void mgr.start(t)}
             stop={mgr.stop}
             onBack={() => void go({ name: "list" })}

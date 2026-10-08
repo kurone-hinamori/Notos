@@ -28,16 +28,50 @@ fn story_path(app: &AppHandle, id: &str) -> Result<PathBuf, String> {
     Ok(stories_dir(app)?.join(format!("{id}.json")))
 }
 
-fn summarize(story: &Value) -> Value {
-    let chapters = story["chapters"].as_array();
-    let char_count: usize = chapters
+fn body_chars(story: &Value) -> usize {
+    story["chapters"]
+        .as_array()
         .map(|cs| {
             cs.iter()
                 .map(|c| c["body"].as_str().unwrap_or("").chars().count())
                 .sum()
         })
-        .unwrap_or(0);
+        .unwrap_or(0)
+}
+
+/// 一覧表示用の概要。短編集(kind = "anthology")は各話を集計する。
+fn summarize(story: &Value) -> Value {
+    if story["kind"].as_str() == Some("anthology") {
+        let episodes: Vec<&Value> = story["episodes"]
+            .as_array()
+            .map(|e| e.iter().collect())
+            .unwrap_or_default();
+        let titles: Vec<&str> = episodes
+            .iter()
+            .filter_map(|e| e["title"].as_str())
+            .filter(|t| !t.trim().is_empty())
+            .collect();
+        let done = episodes
+            .iter()
+            .filter(|e| e["status"].as_str() == Some("done"))
+            .count();
+        return json!({
+            "kind": "anthology",
+            "id": story["id"],
+            "title": story["title"],
+            "tagline": "",
+            "synopsis": titles.join(" / "),
+            "keywords": story["keywords"],
+            "status": if done > 0 && done == episodes.len() { "done" } else if titles.is_empty() { "concept" } else { "producing" },
+            "createdAt": story["createdAt"],
+            "updatedAt": story["updatedAt"],
+            "chapterCount": episodes.len(),
+            "doneCount": done,
+            "charCount": episodes.iter().map(|e| body_chars(e)).sum::<usize>(),
+        });
+    }
     json!({
+        "kind": "novel",
         "id": story["id"],
         "title": story["title"],
         "tagline": story["tagline"],
@@ -46,8 +80,9 @@ fn summarize(story: &Value) -> Value {
         "status": story["status"],
         "createdAt": story["createdAt"],
         "updatedAt": story["updatedAt"],
-        "chapterCount": chapters.map(|c| c.len()).unwrap_or(0),
-        "charCount": char_count,
+        "chapterCount": story["chapters"].as_array().map(|c| c.len()).unwrap_or(0),
+        "doneCount": 0,
+        "charCount": body_chars(story),
     })
 }
 

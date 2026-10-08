@@ -4,17 +4,22 @@ import { deleteStory, listStories } from "../lib/storage";
 import { StatusBadge, formatDate } from "./ui";
 
 export function StoryList(props: {
+  /** novel: 長編の一覧、anthology: 短編集の一覧 */
+  kind: "novel" | "anthology";
   onOpen: (id: string, tab?: string) => void;
   onNew: () => void;
-  onDuplicate: (id: string) => void;
+  onDuplicate?: (id: string) => void;
 }) {
+  const anthology = props.kind === "anthology";
+  const noun = anthology ? "短編集" : "物語";
   const [items, setItems] = useState<StorySummary[] | null>(null);
   const [error, setError] = useState("");
   const [query, setQuery] = useState("");
 
   const reload = () =>
     listStories()
-      .then(setItems)
+      // 以前のバージョンで作った物語には kind がないので、長編として扱う
+      .then((list) => setItems(list.filter((s) => (s.kind ?? "novel") === props.kind)))
       .catch((e) => setError(String(e)));
   useEffect(() => {
     void reload();
@@ -34,20 +39,21 @@ export function StoryList(props: {
   return (
     <div className="page">
       <header className="page-head">
-        <h2>物語の一覧</h2>
+        <h2>{anthology ? "短編集の一覧" : "物語の一覧"}</h2>
         <div className="row">
           <input className="search" placeholder="タイトル・キーワードで検索" value={query} onChange={(e) => setQuery(e.target.value)} />
           <button className="primary" onClick={props.onNew}>
-            ＋ 新しい物語
+            ＋ 新しい{noun}
           </button>
         </div>
       </header>
       {error && <p className="error">{error}</p>}
       {items && items.length === 0 && (
         <div className="empty">
-          <p>まだ物語がありません。</p>
+          <p>まだ{noun}がありません。</p>
+          {anthology && <p>短編集では、1話ずつガチャで概要を決めて、1話完結の短編を書いていきます。</p>}
           <button className="primary" onClick={props.onNew}>
-            最初の物語を作る
+            最初の{noun}を作る
           </button>
         </div>
       )}
@@ -55,7 +61,13 @@ export function StoryList(props: {
         {shown.map((s) => (
           <article key={s.id} className="story-card" onClick={() => props.onOpen(s.id)}>
             <div className="row between">
-              <StatusBadge status={s.status} />
+              {anthology ? (
+                <span className={`badge badge-${s.status}`}>
+                  {s.doneCount}/{s.chapterCount}話 完成
+                </span>
+              ) : (
+                <StatusBadge status={s.status} />
+              )}
               <span className="muted small-text">{formatDate(s.updatedAt)}</span>
             </div>
             <h3>{s.title || "(無題)"}</h3>
@@ -70,28 +82,36 @@ export function StoryList(props: {
             </div>
             <footer className="row between">
               <span className="muted small-text">
-                {s.chapterCount ? `${s.chapterCount}章 / ${s.charCount.toLocaleString()}字` : "本文は未作成"}
+                {anthology
+                  ? `全${s.chapterCount}話 / ${s.charCount.toLocaleString()}字`
+                  : s.chapterCount
+                    ? `${s.chapterCount}章 / ${s.charCount.toLocaleString()}字`
+                    : "本文は未作成"}
               </span>
               <span className="row">
-                <button
-                  className="small"
-                  onClick={(e) => {
-                    e.stopPropagation();
-                    props.onOpen(s.id, "body");
-                  }}
-                >
-                  編集
-                </button>
-                <button
-                  className="small"
-                  title="キーワードを修正して、ガチャからやり直す(元の物語は残ります)"
-                  onClick={(e) => {
-                    e.stopPropagation();
-                    props.onDuplicate(s.id);
-                  }}
-                >
-                  複製
-                </button>
+                {!anthology && (
+                  <button
+                    className="small"
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      props.onOpen(s.id, "body");
+                    }}
+                  >
+                    編集
+                  </button>
+                )}
+                {props.onDuplicate && (
+                  <button
+                    className="small"
+                    title="キーワードを修正して、ガチャからやり直す(元の物語は残ります)"
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      props.onDuplicate?.(s.id);
+                    }}
+                  >
+                    複製
+                  </button>
+                )}
                 <button
                   className="small danger"
                   onClick={(e) => {

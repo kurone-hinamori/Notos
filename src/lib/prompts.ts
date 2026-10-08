@@ -17,11 +17,20 @@ export const STYLE_GUIDE = `【文体・執筆ルール】
 
 const rand = () => Math.random().toString(36).slice(2, 8);
 
-export function conceptPrompt(keywords: string[], note: string, avoidTitles: string[]): ChatMessage[] {
+/** 短編集の1話として書く場合の目標文字数。長編なら undefined。 */
+export type ShortSpec = { chars: number } | undefined;
+
+const isShort = (s: Pick<Story, "form">) => s.form === "short";
+const storyLength = (s: Story) => s.plan.chapters * s.plan.scenes * s.plan.charsPerScene;
+
+export function conceptPrompt(keywords: string[], note: string, avoidTitles: string[], short?: ShortSpec): ChatMessage[] {
+  const form = short
+    ? `1話で完結する短編ライトノベル(約${short.chars.toLocaleString()}字)`
+    : "長編ライトノベル(文庫本1冊分)";
   return [
     {
       role: "system",
-      content: `${EDITOR}与えられたキーワードから、長編ライトノベル(文庫本1冊分)の企画案を1つ考えます。出力はJSONのみ。`,
+      content: `${EDITOR}与えられたキーワードから、${form}の企画案を1つ考えます。出力はJSONのみ。`,
     },
     {
       role: "user",
@@ -35,8 +44,13 @@ ${note.trim() ? `補足の希望:${note.trim()}\n` : ""}
 - title:Web小説らしくキャッチーで、内容が伝わるタイトル(40字以内)。
 - tagline:読者の興味を引く一行キャッチコピー(40字以内)。
 - genre:ジャンル(例:異世界ファンタジー、現代ラブコメ、ミステリー)。
-- synopsis:あらすじ。400〜600字。起承転結と、結末の方向性まで含める。あらすじ中の人物名は、必ず characters に挙げた name と一字一句同じ表記にする(別名・愛称を使わない)。
-- characters:登場人物を4〜6名。主人公、ヒロインまたは相棒、敵対者・黒幕などを含める。name は日本語表記の氏名、role は役割、summary は人物像を60〜100字で。
+${
+  short
+    ? `- 約${short.chars.toLocaleString()}字で書き切れる規模にする。登場人物と舞台を絞り、1つの出来事・1つの感情の変化を鮮やかに描く。
+- synopsis:あらすじ。250〜400字。起承転結と結末まで含め、この1話で物語が完結するようにする。あらすじ中の`
+    : "- synopsis:あらすじ。400〜600字。起承転結と、結末の方向性まで含める。あらすじ中の"
+}人物名は、必ず characters に挙げた name と一字一句同じ表記にする(別名・愛称を使わない)。
+- characters:${short ? "登場人物を2〜4名。主人公と、物語の鍵となる人物を含める。" : "登場人物を4〜6名。主人公、ヒロインまたは相棒、敵対者・黒幕などを含める。"}name は日本語表記の氏名、role は役割、summary は人物像を60〜100字で。
 ${avoidTitles.length ? `- 次の案とは内容もタイトルも被らないこと:${avoidTitles.join(" / ")}` : ""}`,
     },
   ];
@@ -53,6 +67,7 @@ ${s.characters.map((c) => `- ${c.name}(${c.role}):${c.summary}`).join("\n")}`;
 }
 
 export function biblePrompt(s: Story): ChatMessage[] {
+  const short = isShort(s);
   return [
     {
       role: "system",
@@ -60,18 +75,18 @@ export function biblePrompt(s: Story): ChatMessage[] {
     },
     {
       role: "user",
-      content: `次の企画から、設定資料を作成してください。
+      content: `次の企画から、設定資料を作成してください。${short ? `これは約${storyLength(s).toLocaleString()}字の1話完結の短編です。短編に必要な分だけを簡潔に、しかし具体的に書いてください。` : ""}
 
 ${conceptText(s)}
 
 【条件】
 - premise:物語の前提・核となる謎や対立・結末の方向性を200〜300字で。
-- worldview:世界観・舞台・時代・社会のルール(魔法や技術があればそのルール)を300〜500字で。
+- worldview:世界観・舞台・時代・社会のルール(魔法や技術があればそのルール)を${short ? "150〜300字" : "300〜500字"}で。
 - style:文体指針。視点(例:主人公の一人称/三人称一元視点)、時制、全体のトーン、会話と地の文の比率などを具体的に。
 - timeline:物語の舞台設定上の時系列(物語開始時点までの重要な過去の出来事と、物語内の期間)。
-- characters:企画の登場人物すべて(必要なら脇役も追加して6〜10名)。各人物について reading(読み仮名)、age、appearance(外見)、personality(性格)、speech(口調・一人称・二人称の呼び方の例)、background(経歴)、relations(他の人物との関係)を具体的に。
-- places:物語の主要な地名・場所を4〜8件。description に位置関係や特徴を。
-- items:物語上重要な品物・道具・能力を2〜6件。
+- characters:企画の登場人物すべて(必要なら脇役も追加して${short ? "3〜6名" : "6〜10名"})。各人物について reading(読み仮名)、age、appearance(外見)、personality(性格)、speech(口調・一人称・二人称の呼び方の例)、background(経歴)、relations(他の人物との関係)を具体的に。
+- places:物語の主要な地名・場所を${short ? "1〜4件" : "4〜8件"}。description に位置関係や特徴を。
+- items:物語上重要な品物・道具・能力を${short ? "0〜3件" : "2〜6件"}。
 - terms:固有の用語・組織・種族などを必要なだけ(なければ空配列)。
 - 設定同士が矛盾しないこと。名前の表記は統一すること。`,
     },
@@ -91,7 +106,11 @@ export function outlinePrompt(s: Story, plan: BookPlan): ChatMessage[] {
 【設定資料】
 ${bibleToText(s.bible)}
 
-この物語の章構成を作ってください。
+この物語の章構成を作ってください。${
+        isShort(s)
+          ? `これは約${storyLength(s).toLocaleString()}字の1話完結の短編なので、章は1つだけです。beats で導入・展開・山場・結末を組み立て、最後の場面で物語を完結させてください。`
+          : ""
+      }
 
 【条件】
 - 全${plan.chapters}章。chapters 配列の要素数を必ず${plan.chapters}にする。
@@ -121,7 +140,7 @@ export function scenePrompt(opts: {
   const lastScene = ci === story.chapters.length - 1 && si === ch.beats.length - 1;
   const outline = story.chapters.map((c, i) => `第${i + 1}章「${c.title}」:${c.plan}`).join("\n");
 
-  const system = `${EDITOR}設定資料と構成に忠実に、長編小説の本文を一場面ずつ執筆します。
+  const system = `${EDITOR}設定資料と構成に忠実に、${isShort(story) ? "1話完結の短編小説" : "長編小説"}の本文を一場面ずつ執筆します。
 
 【設定資料】
 ${bibleToText(story.bible)}
@@ -145,7 +164,11 @@ ${existingInScene ? `【この場面でここまでに書いた部分】\n${tail
 場面${si + 1}「${ch.beats[si]}」を、約${target}字で執筆してください。
 - 直前の本文から自然につなげる。同じ内容を繰り返さない。
 - この場面の範囲だけを書く。次の場面以降の出来事を先取りしない。
-${lastScene ? "- これが物語の最終場面です。全ての伏線を回収し、余韻のある結末で物語を締めくくる。" : next ? `- 物語を勝手に終わらせない。この場面は次の展開(${next.title})へ続く途中経過である。` : ""}
+${
+  lastScene
+    ? "- これが物語の最終場面です。全ての伏線を回収し、余韻のある結末で物語を締めくくる。"
+    : `- 物語を勝手に終わらせない。この場面は${next && si === ch.beats.length - 1 ? `次の章(${next.title})` : "次の場面"}へ続く途中経過である。`
+}
 - 描写・心理・会話を丁寧に書き込み、あっさり要約せず、場面として具体的に描く。
 本文のみを出力してください。`;
 

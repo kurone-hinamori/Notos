@@ -9,6 +9,7 @@ import { BodyTab } from "./tabs/BodyTab";
 import { BibleTab } from "./tabs/BibleTab";
 import { ProductionTab } from "./tabs/ProductionTab";
 import { ExportTab } from "./tabs/ExportTab";
+import { novelBook } from "../lib/epub";
 
 export type Mutate = (m: (draft: Story) => void) => void;
 
@@ -83,12 +84,21 @@ export function StoryDetail(props: {
       {tab === "body" && <BodyTab story={story} mutate={mutate} start={props.start} running={run.running} />}
       {tab === "bible" && <BibleTab story={story} mutate={mutate} start={props.start} running={run.running} />}
       {tab === "art" && <ArtTab />}
-      {tab === "export" && <ExportTab story={story} author={props.settings.author} mutate={mutate} />}
+      {tab === "export" && (
+        <ExportTab
+          title={story.title}
+          author={story.author}
+          defaultAuthor={props.settings.author}
+          onAuthor={(v) => mutate((s) => void (s.author = v))}
+          hasBody={story.chapters.some((c) => c.body)}
+          makeBook={(author, includeBible) => novelBook(story, author, includeBible)}
+        />
+      )}
     </div>
   );
 }
 
-function ArtTab() {
+export function ArtTab() {
   const items = [
     ["表紙", "物語の世界観に合わせた表紙イラスト"],
     ["カラー口絵", "巻頭を飾るカラーイラスト"],

@@ -10,6 +10,7 @@ import {
   outlinePrompt,
   proofreadChunkPrompt,
   scenePrompt,
+  type ShortSpec,
 } from "./prompts";
 import {
   bibleUpdateSchema,
@@ -51,9 +52,10 @@ export async function pullConcept(
   note: string,
   avoidTitles: string[],
   signal?: AbortSignal,
+  short?: ShortSpec,
 ): Promise<Concept> {
   const c = await chatJson<Concept>(settings, {
-    messages: conceptPrompt(keywords, note, avoidTitles),
+    messages: conceptPrompt(keywords, note, avoidTitles, short),
     schema: conceptSchema,
     temperature: Math.min(1.1, settings.temperature + 0.25),
     signal,

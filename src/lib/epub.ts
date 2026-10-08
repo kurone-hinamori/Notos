@@ -1,8 +1,14 @@
 import JSZip from "jszip";
-import type { Bible, Story } from "../types";
+import type { Anthology, Bible, Story } from "../types";
 
-export interface EpubOptions {
-  includeBible: boolean;
+/** EPUB にする本の中身(長編・短編集の共通形式) */
+export interface Book {
+  title: string;
+  tagline: string;
+  author: string;
+  synopsis: string;
+  chapters: { heading: string; body: string }[];
+  appendix: { title: string; html: string }[];
 }
 
 const esc = (s: string) =>
@@ -135,7 +141,38 @@ function bibleSections(b: Bible): { title: string; html: string }[] {
   return sections;
 }
 
-export async function buildEpub(story: Story, opts: EpubOptions): Promise<Uint8Array> {
+export function novelBook(story: Story, author: string, includeBible: boolean): Book {
+  return {
+    title: story.title,
+    tagline: story.tagline,
+    author,
+    synopsis: story.synopsis,
+    chapters: story.chapters.map((c, i) => ({ heading: `第${i + 1}章　${c.title}`, body: c.body })),
+    appendix: includeBible && story.bible.generated ? bibleSections(story.bible).map((s) => ({ title: `設定資料 ${s.title}`, html: s.html })) : [],
+  };
+}
+
+/** 短編集を1冊にする。各話が1章になり、本文のない話は含めない。 */
+export function anthologyBook(a: Anthology, author: string, includeBible: boolean): Book {
+  const eps = a.episodes.map((e, i) => ({ e, n: i + 1 })).filter(({ e }) => e.chapters.some((c) => c.body.trim()));
+  return {
+    title: a.title,
+    tagline: "",
+    author,
+    synopsis: eps.map(({ e, n }) => `第${n}話 ${e.title}`).join(" / "),
+    chapters: eps.map(({ e, n }) => ({
+      heading: `第${n}話　${e.title}`,
+      body: e.chapters.map((c) => c.body).filter(Boolean).join("\n\n"),
+    })),
+    appendix: includeBible
+      ? eps.flatMap(({ e, n }) =>
+          e.bible.generated ? bibleSections(e.bible).map((s) => ({ title: `第${n}話 設定資料 ${s.title}`, html: s.html })) : [],
+        )
+      : [],
+  };
+}
+
+export async function buildEpub(book: Book): Promise<Uint8Array> {
   const zip = new JSZip();
   zip.file("mimetype", "application/epub+zip", { compression: "STORE" });
   zip.file(
@@ -148,23 +185,23 @@ export async function buildEpub(story: Story, opts: EpubOptions): Promise<Uint8A
 
   type Page = { id: string; file: string; title: string; nav: boolean; html: string };
   const pages: Page[] = [];
-  const author = story.author.trim() || "Notos";
+  const author = book.author.trim() || "Notos";
 
   pages.push({
     id: "titlepage",
     file: "titlepage.xhtml",
-    title: story.title,
+    title: book.title,
     nav: false,
     html: xhtml(
-      story.title,
-      `<div class="title-page"><h1 class="main">${inline(story.title)}</h1>${
-        story.tagline ? `<p class="sub">${inline(story.tagline)}</p>` : ""
+      book.title,
+      `<div class="title-page"><h1 class="main">${inline(book.title)}</h1>${
+        book.tagline ? `<p class="sub">${inline(book.tagline)}</p>` : ""
       }<p class="author">${inline(author)}</p></div>`,
     ),
   });
 
-  story.chapters.forEach((c, i) => {
-    const heading = `第${i + 1}章　${c.title}`;
+  book.chapters.forEach((c, i) => {
+    const heading = c.heading;
     pages.push({
       id: `chapter${i + 1}`,
       file: `chapter${i + 1}.xhtml`,
@@ -174,17 +211,16 @@ export async function buildEpub(story: Story, opts: EpubOptions): Promise<Uint8A
     });
   });
 
-  if (opts.includeBible && story.bible.generated) {
-    bibleSections(story.bible).forEach((sec, i) => {
-      pages.push({
-        id: `bible${i + 1}`,
-        file: `bible${i + 1}.xhtml`,
-        title: `設定資料 ${sec.title}`,
-        nav: true,
-        html: xhtml(sec.title, `<h2>${inline("設定資料 " + sec.title)}</h2>\n<div class="bible">${sec.html}</div>`),
-      });
+  book.appendix.forEach((sec, i) => {
+    pages.push({
+      id: `bible${i + 1}`,
+      file: `bible${i + 1}.xhtml`,
+      title: sec.title,
+      nav: true,
+      html: xhtml(sec.title, `<h2>${inline(sec.title)}</h2>
+<div class="bible">${sec.html}</div>`),
     });
-  }
+  });
 
   const now = new Date();
   const modified = now.toISOString().replace(/\.\d+Z$/, "Z");
@@ -195,7 +231,7 @@ export async function buildEpub(story: Story, opts: EpubOptions): Promise<Uint8A
     nav: false,
     html: xhtml(
       "奥付",
-      `<div class="colophon"><p>${inline(story.title)}</p><p>著者:${inline(author)}</p><p>${now.getFullYear()}年${
+      `<div class="colophon"><p>${inline(book.title)}</p><p>著者:${inline(author)}</p><p>${now.getFullYear()}年${
         now.getMonth() + 1
       }月${now.getDate()}日 作成</p><p>本書は Notos(ローカルLLM)で生成されました。</p></div>`,
     ),
@@ -213,10 +249,10 @@ export async function buildEpub(story: Story, opts: EpubOptions): Promise<Uint8A
 <package xmlns="http://www.idpf.org/2007/opf" version="3.0" unique-identifier="bookid" xml:lang="ja">
   <metadata xmlns:dc="http://purl.org/dc/elements/1.1/">
     <dc:identifier id="bookid">${bookId}</dc:identifier>
-    <dc:title>${esc(story.title)}</dc:title>
+    <dc:title>${esc(book.title)}</dc:title>
     <dc:creator>${esc(author)}</dc:creator>
     <dc:language>ja</dc:language>
-    <dc:description>${esc(story.synopsis)}</dc:description>
+    <dc:description>${esc(book.synopsis)}</dc:description>
     <meta property="dcterms:modified">${modified}</meta>
   </metadata>
   <manifest>
@@ -246,7 +282,7 @@ export async function buildEpub(story: Story, opts: EpubOptions): Promise<Uint8A
     `<?xml version="1.0" encoding="UTF-8"?>
 <ncx xmlns="http://www.daisy.org/z3986/2005/ncx/" version="2005-1">
   <head><meta name="dtb:uid" content="${bookId}"/></head>
-  <docTitle><text>${esc(story.title)}</text></docTitle>
+  <docTitle><text>${esc(book.title)}</text></docTitle>
   <navMap>
 ${navPages
   .map(

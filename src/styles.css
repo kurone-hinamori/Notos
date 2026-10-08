@@ -74,6 +74,7 @@ details > summary { cursor: pointer; padding: 4px 0; }
   background: linear-gradient(135deg, #3b3699, #8a52c0); font-weight: bold; font-size: 20px;
 }
 .sidebar nav { display: flex; flex-direction: column; gap: 4px; }
+.nav-label { font-size: 11px; opacity: 0.55; padding: 10px 12px 2px; letter-spacing: 0.1em; }
 .sidebar nav button {
   background: transparent; border: none; color: inherit; text-align: left; padding: 9px 12px; border-radius: 8px;
 }

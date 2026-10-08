@@ -82,6 +82,8 @@ export interface BookPlan {
 export interface Story {
   version: 1;
   id: string;
+  /** "short" は短編集の1話(1章で完結する短編) */
+  form?: "novel" | "short";
   createdAt: string;
   updatedAt: string;
   keywords: string[];
@@ -99,7 +101,34 @@ export interface Story {
   author: string;
 }
 
+/** 短編集。各話は1章構成の独立した Story として持つ。 */
+export interface Anthology {
+  version: 1;
+  kind: "anthology";
+  id: string;
+  createdAt: string;
+  updatedAt: string;
+  title: string;
+  /** 全話に共通するキーワード(各話のガチャの初期値になる) */
+  keywords: string[];
+  note: string;
+  author: string;
+  /** 新しく追加する話の規模の既定値 */
+  plan: { scenes: number; charsPerScene: number };
+  episodes: Story[];
+}
+
+export type Doc = Story | Anthology;
+
+export function isAnthology(d: Doc | null | undefined): d is Anthology {
+  return (d as Anthology | null)?.kind === "anthology";
+}
+
 export interface StorySummary {
+  /** 以前のバージョンの一覧データでは欠けていることがある */
+  kind?: "novel" | "anthology";
+  /** 短編集の場合、完成した話の数 */
+  doneCount: number;
   id: string;
   title: string;
   tagline: string;
