@@ -1,5 +1,5 @@
 import { useState } from "react";
-import type { Anthology, Concept, Settings, Story } from "../types";
+import type { Anthology, AnthologyMode, CharacterSheet, Concept, Settings, SharedCharacter, Story } from "../types";
 import { emptyBible } from "../types";
 import type { Job, RunState } from "../hooks";
 import type { Task } from "../lib/pipeline";
@@ -14,6 +14,29 @@ import { BodyTab } from "./tabs/BodyTab";
 import { BibleTab } from "./tabs/BibleTab";
 import { ExportTab } from "./tabs/ExportTab";
 import { Field, Section } from "./ui";
+import { CastEditor } from "./CastEditor";
+import { castOf, isSeries, sharedContextFor, toShared } from "../lib/anthology";
+import { sameName } from "../lib/text";
+
+/** 短編集の種類の選択 */
+export function ModeSelect(props: { mode: AnthologyMode; onChange: (m: AnthologyMode) => void }) {
+  const options: [AnthologyMode, string, string][] = [
+    ["series", "連作短編", "共通の登場人物・世界観で、話の順に時間が進みます。前の話で起きたことが後の話に引き継がれます。"],
+    ["omnibus", "オムニバス", "各話が独立した物語です。共通の登場人物を出すことはできますが、話をまたいだ経緯は引き継ぎません。"],
+  ];
+  return (
+    <div className="stack">
+      {options.map(([value, label, desc]) => (
+        <label key={value} className="check">
+          <input type="radio" checked={props.mode === value} onChange={() => props.onChange(value)} />
+          <span>
+            <strong>{label}</strong> <span className="muted small-text">{desc}</span>
+          </span>
+        </label>
+      ))}
+    </div>
+  );
+}
 
 type MutateAnthology = (m: (draft: Anthology) => void) => void;
 
@@ -99,6 +122,21 @@ export function AnthologyDetail(props: {
       x.chapters = [];
     });
   };
+
+  /** 設定資料の人物を共通の登場人物にし、この話の出演者にする */
+  const promote = (i: number, c: CharacterSheet) =>
+    mutate((d) => {
+      d.cast ??= [];
+      let hit = d.cast.find((x) => sameName(x.name, c.name));
+      if (!hit) {
+        hit = toShared(c);
+        d.cast.push(hit);
+      }
+      const e = d.episodes[i];
+      e.castIds = [...new Set([...(e.castIds ?? []), hit.id])];
+    });
+
+  const setCastIds = (i: number, ids: string[]) => mutate((d) => void (d.episodes[i].castIds = ids));
 
   const decide = (i: number, c: Concept, keywords: string[], note: string) =>
     mutate((d) => {
@@ -209,13 +247,15 @@ export function AnthologyDetail(props: {
                 onDecide={(c, kws, note) => decide(index, c, kws, note)}
                 onRedo={() => redoEpisode(index)}
                 onRemove={() => removeEpisode(index)}
+                onPromote={(c) => promote(index, c)}
+                onCastIds={(ids) => setCastIds(index, ids)}
               />
             )}
           </div>
         </div>
       )}
 
-      {tab === "info" && <InfoTab anthology={a} mutate={mutate} />}
+      {tab === "info" && <InfoTab anthology={a} mutate={mutate} settings={props.settings} />}
       {tab === "art" && <ArtTab />}
       {tab === "export" && (
         <ExportTab
@@ -248,8 +288,20 @@ function EpisodePanel(props: {
   onDecide: (c: Concept, keywords: string[], note: string) => void;
   onRedo: () => void;
   onRemove: () => void;
+  onPromote: (c: CharacterSheet) => void;
+  onCastIds: (ids: string[]) => void;
 }) {
   const { anthology: a, index, episode: ep, run } = props;
+  const cast = a.cast ?? [];
+  const picker = cast.length > 0 && (
+    <CastPicker
+      cast={cast}
+      selected={ep.castIds ?? []}
+      onChange={props.onCastIds}
+      locked={ep.bible.generated}
+      series={isSeries(a)}
+    />
+  );
   const [tab, setTab] = useState<"overview" | "production" | "body" | "bible">(
     ep.chapters.some((c) => c.body) ? "body" : "production",
   );
@@ -276,6 +328,8 @@ function EpisodePanel(props: {
           update={props.updateGacha}
           short={{ chars: target }}
           avoidTitles={otherTitles}
+          shared={sharedContextFor(a, index)}
+          extra={picker}
           confirmLabel={`この案で第${n}話を決定 →`}
           onConfirm={(p) => props.onDecide(p.concept, cleanKeywords(p.keywords), p.note)}
         />
@@ -318,7 +372,12 @@ function EpisodePanel(props: {
           </button>
         ))}
       </nav>
-      {tab === "overview" && <OverviewTab story={ep} mutate={props.mutate} />}
+      {tab === "overview" && (
+        <div className="stack">
+          {picker && <section className="card">{picker}</section>}
+          <OverviewTab story={ep} mutate={props.mutate} />
+        </div>
+      )}
       {tab === "production" && (
         <ProductionTab
           story={ep}
@@ -330,15 +389,81 @@ function EpisodePanel(props: {
         />
       )}
       {tab === "body" && <BodyTab story={ep} mutate={props.mutate} start={props.start} running={run.running} />}
-      {tab === "bible" && <BibleTab story={ep} mutate={props.mutate} start={props.start} running={run.running} />}
+      {tab === "bible" && (
+        <BibleTab
+          story={ep}
+          mutate={props.mutate}
+          start={props.start}
+          running={run.running}
+          onPromote={props.onPromote}
+          isShared={(name) => castOf(a, ep).some((c) => sameName(c.name, name))}
+        />
+      )}
     </div>
   );
 }
 
-function InfoTab({ anthology: a, mutate }: { anthology: Anthology; mutate: MutateAnthology }) {
+/** 話に出演する共通の登場人物の選択 */
+function CastPicker(props: {
+  cast: SharedCharacter[];
+  selected: string[];
+  onChange: (ids: string[]) => void;
+  /** 設定資料の作成後は、出演者を変えても設定資料に反映されない */
+  locked: boolean;
+  series: boolean;
+}) {
+  const toggle = (id: string) =>
+    props.onChange(props.selected.includes(id) ? props.selected.filter((x) => x !== id) : [...props.selected, id]);
+  return (
+    <div className="field">
+      <span>この話に登場する共通の登場人物(同一人物として扱います)</span>
+      <div className="row wrap">
+        {props.cast.map((c) => (
+          <label key={c.id} className="check">
+            <input type="checkbox" checked={props.selected.includes(c.id)} onChange={() => toggle(c.id)} />
+            {c.name}
+            {c.role && <span className="muted small-text">({c.role})</span>}
+          </label>
+        ))}
+      </div>
+      <small className="muted">
+        {props.locked
+          ? "設定資料は作成済みです。出演者を変えた場合は「制作」タブで設定資料を作り直してください。"
+          : props.series
+            ? "選んだ人物の設定と、前の話までの経緯がガチャ・設定資料・本文に引き継がれます。"
+            : "選んだ人物の設定がガチャ・設定資料・本文に引き継がれます。"}
+      </small>
+    </div>
+  );
+}
+
+function InfoTab({ anthology: a, mutate, settings }: { anthology: Anthology; mutate: MutateAnthology; settings: Settings }) {
   const unstarted = a.episodes.filter((e) => !e.chapters.length).length;
+  const label = (id: string) => {
+    const i = a.episodes.findIndex((e) => e.id === id);
+    return i < 0 ? "(削除された話)" : `第${i + 1}話「${a.episodes[i].title}」`;
+  };
   return (
     <div className="stack">
+      <Section title="短編集の種類">
+        <ModeSelect mode={a.mode ?? "omnibus"} onChange={(m) => mutate((d) => void (d.mode = m))} />
+        <Field
+          label="共通の世界観・舞台(全話に適用されます)"
+          rows={3}
+          value={a.world ?? ""}
+          onChange={(v) => mutate((d) => void (d.world = v))}
+        />
+      </Section>
+      <Section title="共通の登場人物">
+        <CastEditor
+          cast={a.cast ?? []}
+          onChange={(fn) => mutate((d) => void (d.cast = fn(d.cast ?? [])))}
+          settings={settings}
+          context={{ title: a.title, keywords: a.keywords, note: a.note, world: a.world ?? "" }}
+          onWorld={(w) => mutate((d) => void (d.world = w))}
+          episodeLabel={label}
+        />
+      </Section>
       <Section title="短編集の情報">
         <Field label="タイトル" value={a.title} onChange={(v) => mutate((d) => void (d.title = v))} />
         <Field

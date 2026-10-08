@@ -1,4 +1,5 @@
-import type { Concept, Settings } from "../types";
+import type { ReactNode } from "react";
+import type { Concept, Settings, SharedContext } from "../types";
 import { pullConcept } from "../lib/pipeline";
 import type { ShortSpec } from "../lib/prompts";
 
@@ -21,6 +22,8 @@ export interface Pull {
  */
 export interface GachaState {
   keywords: string[];
+  /** 手入力したタイトル(空ならガチャで考える) */
+  title: string;
   draft: string;
   note: string;
   pulls: Pull[];
@@ -33,6 +36,7 @@ export interface GachaState {
 export function initialGacha(keywords: string[], note: string, origin?: Concept): GachaState {
   return {
     keywords: [...keywords],
+    title: "",
     draft: "",
     note,
     pulls: origin ? [{ concept: origin, keywords: [...keywords], note, origin: true }] : [],
@@ -52,6 +56,10 @@ export function ConceptGacha(props: {
   short?: ShortSpec;
   /** 内容が被らないようにする既存の案のタイトル */
   avoidTitles?: string[];
+  /** 短編集から渡す共有情報(共通の登場人物など) */
+  shared?: SharedContext;
+  /** キーワード欄の上に表示する追加の入力(出演者の選択など) */
+  extra?: ReactNode;
   confirmLabel: string;
   onConfirm: (pull: Pull) => void;
 }) {
@@ -62,8 +70,8 @@ export function ConceptGacha(props: {
 
   const pull = async () => {
     const kws = cleanKeywords([...st.keywords, ...splitWords(st.draft)]);
-    if (!kws.length) {
-      update((s) => ({ ...s, error: "キーワードを1つ以上入力してください" }));
+    if (!kws.length && !st.title.trim() && !props.shared?.characters.length) {
+      update((s) => ({ ...s, error: "キーワードかタイトルを入力してください" }));
       return;
     }
     const abort = new AbortController();
@@ -71,7 +79,11 @@ export function ConceptGacha(props: {
     update((s) => ({ ...s, keywords: kws, draft: "", error: "", busy: true, abort }));
     try {
       const avoid = [...st.pulls.slice(0, 8).map((p) => p.concept.title), ...(props.avoidTitles ?? [])];
-      const concept = await pullConcept(props.settings, kws, note, avoid, abort.signal, props.short);
+      const concept = await pullConcept(
+        props.settings,
+        { keywords: kws, note, avoidTitles: avoid, short: props.short, title: st.title, shared: props.shared },
+        abort.signal,
+      );
       if (!concept.title || !concept.synopsis) throw new Error("うまく生成できませんでした。もう一度引いてください。");
       update((s) => ({ ...s, busy: false, abort: undefined, pulls: [{ concept, keywords: kws, note }, ...s.pulls], index: 0 }));
     } catch (e) {
@@ -85,6 +97,18 @@ export function ConceptGacha(props: {
   return (
     <div className="two-col">
       <section className="card">
+        {props.extra}
+        <label className="field">
+          <span>タイトル(任意・入力するとこのタイトルで案を考えます)</span>
+          <input
+            value={st.title}
+            placeholder="空欄ならガチャでタイトルも考えます"
+            onChange={(e) => {
+              const v = e.target.value;
+              update((s) => ({ ...s, title: v }));
+            }}
+          />
+        </label>
         <h3>キーワード</h3>
         <p className="muted">
           物語の核にしたい言葉を入力してください(Enter / 読点で追加)。追加したキーワードはクリックして修正でき、修正後にガチャを引き直せます。

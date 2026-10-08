@@ -2,7 +2,8 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import type { Anthology, Doc, Settings, Story } from "./types";
 import { isAnthology } from "./types";
 import { loadStory, saveStory } from "./lib/storage";
-import { runTask, type Ctx, type Task } from "./lib/pipeline";
+import { runTask, summarizeCastChanges, type Ctx, type Task } from "./lib/pipeline";
+import { castOf, isSeries, recordHistory, sharedContextFor } from "./lib/anthology";
 
 export interface RunState {
   /** 実行中のドキュメント(長編または短編集)の id */
@@ -133,6 +134,21 @@ export function useStoryManager(settings: Settings) {
       const taskStart = Date.now();
       pushLog("開始");
 
+      /** 連作短編で1話を書き終えたら、共通の登場人物に起きた変化を経緯として記録する */
+      const afterEpisode = async (ctx: Ctx, job: Job) => {
+        const a = ref.current;
+        if (!isAnthology(a) || !isSeries(a) || job.episode === undefined) return;
+        if (job.task.kind !== "all" && job.task.kind !== "chapter") return;
+        const e = a.episodes[job.episode];
+        const cast = castOf(a, e);
+        const written = e.chapters.length > 0 && e.chapters.every((c) => c.beats.length > 0 && c.sceneDone >= c.beats.length);
+        if (!cast.length || !written) return;
+        ctx.stage("共通の登場人物の経緯を更新中");
+        const changes = await summarizeCastChanges(ctx, cast.map((c) => c.name));
+        mutate((d) => recordHistory(d as Anthology, e.id, changes));
+        ctx.log(`共通の登場人物の経緯を更新しました(${changes.length}名)`);
+      };
+
       try {
         for (const job of jobs) {
           const target = select(job.episode);
@@ -154,7 +170,13 @@ export function useStoryManager(settings: Settings) {
             stream: (text) => setRun((r) => ({ ...r, stream: text })),
             log: (msg) => pushLog(prefix + msg),
           };
+          if (job.episode !== undefined && isAnthology(ref.current)) {
+            // 短編集の共通の登場人物・世界観・使用済みの名前を、生成の直前の状態で話に渡す
+            const shared = sharedContextFor(ref.current, job.episode);
+            target.update((s) => void (s.shared = shared));
+          }
           await runTask(ctx, job.task);
+          if (job.episode !== undefined) await afterEpisode(ctx, job);
         }
         endStage();
         pushLog(`終了  [合計 ${duration(Date.now() - taskStart)}]`);
@@ -170,7 +192,7 @@ export function useStoryManager(settings: Settings) {
         await flush();
       }
     },
-    [select, flush],
+    [select, flush, mutate],
   );
 
   const start = useCallback((task: Task, episode?: number) => execute([{ task, episode }]), [execute]);

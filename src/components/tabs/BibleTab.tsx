@@ -1,4 +1,4 @@
-import type { Entry, Story } from "../../types";
+import type { CharacterSheet, Entry, Story } from "../../types";
 import type { Task } from "../../lib/pipeline";
 import type { Mutate } from "../StoryDetail";
 import { Field, Section } from "../ui";
@@ -17,7 +17,16 @@ const CHARACTER_FIELDS: [keyof Story["bible"]["characters"][number], string, num
   ["notes", "本文で判明した追記", 2],
 ];
 
-export function BibleTab(props: { story: Story; mutate: Mutate; start: (t: Task) => void; running: boolean }) {
+export function BibleTab(props: {
+  story: Story;
+  mutate: Mutate;
+  start: (t: Task) => void;
+  running: boolean;
+  /** 短編集の話の場合:人物を共通の登場人物に登録する */
+  onPromote?: (c: CharacterSheet) => void;
+  /** 短編集の話の場合:共通の登場人物かどうか */
+  isShared?: (name: string) => boolean;
+}) {
   const { story, mutate, running } = props;
   const b = story.bible;
 
@@ -93,6 +102,22 @@ export function BibleTab(props: { story: Story; mutate: Mutate; start: (t: Task)
           <details key={i} className="entry" open={i < 2}>
             <summary>
               <strong>{c.name}</strong> <span className="muted">{c.role}</span>
+              {props.isShared?.(c.name) ? (
+                <span className="tag">共通の登場人物</span>
+              ) : (
+                props.onPromote && (
+                  <button
+                    className="small"
+                    title="この人物を短編集の共通の登場人物にして、他の話にも同一人物として登場させられるようにします"
+                    onClick={(e) => {
+                      e.preventDefault();
+                      props.onPromote?.(c);
+                    }}
+                  >
+                    共通の登場人物に登録
+                  </button>
+                )
+              )}
             </summary>
             <div className="row">
               <input className="grow" value={c.name} onChange={(e) => mutate((s) => void (s.bible.characters[i].name = e.target.value))} />

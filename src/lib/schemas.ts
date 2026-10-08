@@ -60,3 +60,14 @@ export const bibleUpdateSchema = obj({
 export const issuesSchema = obj({
   issues: arr(obj({ quote: str, problem: str, replacement: str })),
 });
+
+/** 短編集の共通の登場人物(と世界観)の案 */
+export const castSchema = obj({
+  world: str,
+  characters: arr(characterSheet),
+});
+
+/** 1話の中で共通の登場人物に起きた変化 */
+export const castChangesSchema = obj({
+  changes: arr(obj({ name: str, change: str })),
+});

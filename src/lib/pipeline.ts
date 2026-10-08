@@ -1,4 +1,4 @@
-import type { Bible, BookPlan, Chapter, Concept, Issue, Settings, Story } from "../types";
+import type { Bible, BookPlan, Chapter, CharacterSheet, Concept, Issue, Settings, Story } from "../types";
 import { emptyBible } from "../types";
 import { chat, chatJson } from "./ollama";
 import {
@@ -10,7 +10,9 @@ import {
   outlinePrompt,
   proofreadChunkPrompt,
   scenePrompt,
-  type ShortSpec,
+  castPrompt,
+  castChangesPrompt,
+  type ConceptRequest,
 } from "./prompts";
 import {
   bibleUpdateSchema,
@@ -19,6 +21,8 @@ import {
   digestSchema,
   issuesSchema,
   outlineSchema,
+  castSchema,
+  castChangesSchema,
 } from "./schemas";
 import { cleanProse, countChars, joinScenes, sameName, splitChunks, tail } from "./text";
 
@@ -46,22 +50,16 @@ function throwIfAborted(ctx: Ctx) {
 
 // ---------------------------------------------------------------- 企画(ガチャ)
 
-export async function pullConcept(
-  settings: Settings,
-  keywords: string[],
-  note: string,
-  avoidTitles: string[],
-  signal?: AbortSignal,
-  short?: ShortSpec,
-): Promise<Concept> {
+export async function pullConcept(settings: Settings, req: ConceptRequest, signal?: AbortSignal): Promise<Concept> {
   const c = await chatJson<Concept>(settings, {
-    messages: conceptPrompt(keywords, note, avoidTitles, short),
+    messages: conceptPrompt(req),
     schema: conceptSchema,
     temperature: Math.min(1.1, settings.temperature + 0.25),
     signal,
   });
   return {
-    title: c.title?.trim() ?? "",
+    // タイトルを手入力した場合は、モデルが言い換えてもそのタイトルを使う
+    title: req.title?.trim() || (c.title?.trim() ?? ""),
     tagline: c.tagline?.trim() ?? "",
     genre: c.genre?.trim() ?? "",
     synopsis: c.synopsis?.trim() ?? "",
@@ -83,7 +81,10 @@ async function stepBible(ctx: Ctx) {
     s.bible = {
       ...emptyBible(),
       ...raw,
-      characters: (raw.characters ?? []).map((c) => ({ ...c, notes: "" })),
+      characters: mergeShared(
+        (raw.characters ?? []).map((c) => ({ ...c, notes: "" })),
+        s.shared?.characters ?? [],
+      ),
       places: (raw.places ?? []).map((e) => ({ ...e, notes: "" })),
       items: (raw.items ?? []).map((e) => ({ ...e, notes: "" })),
       terms: (raw.terms ?? []).map((e) => ({ ...e, notes: "" })),
@@ -91,6 +92,44 @@ async function stepBible(ctx: Ctx) {
     };
   });
   ctx.log("設定資料を作成しました");
+}
+
+/** 短編集の共通の登場人物を設定資料の先頭に入れる(同名の人物がいれば共通設定で置き換える)。 */
+function mergeShared(chars: CharacterSheet[], shared: (CharacterSheet & { history: string })[]): CharacterSheet[] {
+  const fixed = shared.map(({ history, ...c }) => ({ ...c, notes: history ? `これまでの経緯:${history}` : "" }));
+  return [...fixed, ...chars.filter((c) => !fixed.some((f) => sameName(f.name, c.name)))];
+}
+
+// ---------------------------------------------------------------- 短編集の共通の登場人物
+
+/** 短編集の共通の登場人物の案を考える */
+export async function generateCast(
+  settings: Settings,
+  opts: { title: string; keywords: string[]; note: string; world: string; existing: string[]; count: number },
+  signal?: AbortSignal,
+): Promise<{ world: string; characters: CharacterSheet[] }> {
+  const r = await chatJson<{ world: string; characters: CharacterSheet[] }>(settings, {
+    messages: castPrompt(opts),
+    schema: castSchema,
+    temperature: Math.min(1.1, settings.temperature + 0.2),
+    signal,
+  });
+  return {
+    world: r.world?.trim() ?? "",
+    characters: (r.characters ?? []).filter((c) => c.name?.trim()).map((c) => ({ ...c, notes: "" })),
+  };
+}
+
+/** 1話の本文から、共通の登場人物に起きた変化を抜き出す */
+export async function summarizeCastChanges(ctx: Ctx, names: string[]): Promise<{ name: string; change: string }[]> {
+  const r = await chatJson<{ changes: { name: string; change: string }[] }>(ctx.settings, {
+    messages: castChangesPrompt(ctx.get(), names),
+    schema: castChangesSchema,
+    signal: ctx.signal,
+    numPredict: 2048,
+    temperature: 0.2,
+  });
+  return (r.changes ?? []).filter((c) => c.name?.trim() && c.change?.trim());
 }
 
 // ---------------------------------------------------------------- 章構成

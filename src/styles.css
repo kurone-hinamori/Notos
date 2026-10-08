@@ -187,3 +187,6 @@ details > summary { cursor: pointer; padding: 4px 0; }
   align-self: stretch; border: 2px dashed var(--line); border-radius: 8px; height: 120px;
   display: grid; place-items: center; color: var(--muted); font-size: 18px; letter-spacing: 0.3em;
 }
+.history-list { list-style: none; padding: 0; margin: 0; display: grid; gap: 4px; }
+.history-list li { display: grid; grid-template-columns: 180px minmax(0, 1fr); gap: 8px; align-items: center; }
+details > summary .small { margin-left: 8px; }

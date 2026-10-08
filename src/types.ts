@@ -99,7 +99,32 @@ export interface Story {
   chapters: Chapter[];
   plan: BookPlan;
   author: string;
+  /** 短編集の話で、出演させる共通の登場人物の id */
+  castIds?: string[];
+  /** 短編集の話を生成するとき、短編集側から渡される共有情報(生成の直前に設定される) */
+  shared?: SharedContext;
 }
+
+/** 短編集の共通の登場人物。話をまたいで同一人物として扱う。 */
+export interface SharedCharacter extends CharacterSheet {
+  id: string;
+  /** 話ごとの経緯(連作短編で、後の話に引き継ぐ) */
+  history: { episodeId: string; text: string }[];
+}
+
+/** 短編集から各話へ渡す情報 */
+export interface SharedContext {
+  /** 出演する共通の登場人物(経緯はその話より前のものだけ) */
+  characters: (CharacterSheet & { history: string })[];
+  /** 共通の世界観 */
+  world: string;
+  /** 他の話で使われている名前(同名の別人を避ける) */
+  avoidNames: string[];
+  /** 連作短編の場合、これまでの話の流れ */
+  previous: string;
+}
+
+export type AnthologyMode = "series" | "omnibus";
 
 /** 短編集。各話は1章構成の独立した Story として持つ。 */
 export interface Anthology {
@@ -116,6 +141,12 @@ export interface Anthology {
   /** 新しく追加する話の規模の既定値 */
   plan: { scenes: number; charsPerScene: number };
   episodes: Story[];
+  /** series: 連作短編(共通の人物・世界で話の順に時間が進む)、omnibus: 各話が独立。未設定は omnibus */
+  mode?: AnthologyMode;
+  /** 共通の世界観・舞台 */
+  world?: string;
+  /** 共通の登場人物 */
+  cast?: SharedCharacter[];
 }
 
 export type Doc = Story | Anthology;

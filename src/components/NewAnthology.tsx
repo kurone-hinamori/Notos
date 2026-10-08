@@ -1,8 +1,10 @@
 import { useState } from "react";
-import type { Anthology, Settings } from "../types";
+import type { Anthology, AnthologyMode, Settings, SharedCharacter } from "../types";
 import { createAnthology } from "../lib/storage";
 import { Field, Section } from "./ui";
 import { cleanKeywords } from "./ConceptGacha";
+import { CastEditor } from "./CastEditor";
+import { ModeSelect } from "./AnthologyDetail";
 
 function NumberInput(props: { label: string; value: number; min: number; max: number; step?: number; onChange: (n: number) => void }) {
   return (
@@ -27,18 +29,25 @@ export function NewAnthology(props: { settings: Settings; onCreate: (a: Antholog
   const [episodes, setEpisodes] = useState(12);
   const [scenes, setScenes] = useState(4);
   const [chars, setChars] = useState(2000);
+  const [mode, setMode] = useState<AnthologyMode>("series");
+  const [world, setWorld] = useState("");
+  const [cast, setCast] = useState<SharedCharacter[]>([]);
+  const kwList = cleanKeywords(keywords.split(/[,、，\s]+/));
   const perEpisode = scenes * chars;
 
   const create = () =>
     void props.onCreate(
       createAnthology({
         title: title.trim() || "無題の短編集",
-        keywords: cleanKeywords(keywords.split(/[,、，\s]+/)),
+        keywords: kwList,
         note,
         author: props.settings.author,
         episodes,
         scenes,
         charsPerScene: chars,
+        mode,
+        world,
+        cast,
       }),
     );
 
@@ -66,6 +75,28 @@ export function NewAnthology(props: { settings: Settings; onCreate: (a: Antholog
             value={note}
             placeholder="例:どの話も最後は少し温かい気持ちになる結末に"
             onChange={setNote}
+          />
+        </Section>
+        <Section title="短編集の種類">
+          <ModeSelect mode={mode} onChange={setMode} />
+          <Field
+            label="共通の世界観・舞台(任意。全話に適用されます)"
+            rows={3}
+            value={world}
+            placeholder="例:海辺の小さな町にある、雨の日だけ開く喫茶店"
+            onChange={setWorld}
+          />
+        </Section>
+        <Section title="共通の登場人物(任意。あとから追加・変更できます)">
+          <p className="muted small-text">
+            複数の話に登場する人物です。各話でガチャを引く前に出演させる人物を選ぶと、その話では同一人物として扱われます。
+          </p>
+          <CastEditor
+            cast={cast}
+            onChange={(fn) => setCast(fn)}
+            settings={props.settings}
+            context={{ title, keywords: kwList, note, world }}
+            onWorld={setWorld}
           />
         </Section>
         <Section title="規模">

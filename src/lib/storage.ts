@@ -1,5 +1,5 @@
 import { invoke } from "@tauri-apps/api/core";
-import type { Anthology, Concept, Doc, Settings, Story, StorySummary } from "../types";
+import type { Anthology, AnthologyMode, Concept, Doc, Settings, SharedCharacter, Story, StorySummary } from "../types";
 import { DEFAULT_PLAN, DEFAULT_SETTINGS, emptyBible } from "../types";
 import { newId } from "./text";
 
@@ -51,6 +51,9 @@ export function createAnthology(opts: {
   episodes: number;
   scenes: number;
   charsPerScene: number;
+  mode: AnthologyMode;
+  world: string;
+  cast: SharedCharacter[];
 }): Anthology {
   const now = new Date().toISOString();
   const base = { keywords: opts.keywords, note: opts.note, author: opts.author, plan: { scenes: opts.scenes, charsPerScene: opts.charsPerScene } };
@@ -62,6 +65,9 @@ export function createAnthology(opts: {
     updatedAt: now,
     title: opts.title,
     ...base,
+    mode: opts.mode,
+    world: opts.world,
+    cast: opts.cast,
     episodes: Array.from({ length: opts.episodes }, () => createEpisode(base)),
   };
 }

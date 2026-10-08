@@ -1,5 +1,5 @@
 import type { ChatMessage } from "./ollama";
-import type { Bible, BookPlan, Story } from "../types";
+import type { Bible, BookPlan, SharedContext, Story } from "../types";
 import { bibleToText, tail } from "./text";
 
 const EDITOR = "あなたは「小説家になろう」「カクヨム」で人気作を数多く手がけてきた、ライトノベル作家兼編集者です。";
@@ -23,10 +23,66 @@ export type ShortSpec = { chars: number } | undefined;
 const isShort = (s: Pick<Story, "form">) => s.form === "short";
 const storyLength = (s: Story) => s.plan.chapters * s.plan.scenes * s.plan.charsPerScene;
 
-export function conceptPrompt(keywords: string[], note: string, avoidTitles: string[], short?: ShortSpec): ChatMessage[] {
+/** ガチャ(企画案)の条件 */
+export interface ConceptRequest {
+  keywords: string[];
+  note: string;
+  /** 内容・タイトルが被らないようにする案のタイトル */
+  avoidTitles: string[];
+  /** 短編集の1話として考える場合 */
+  short?: ShortSpec;
+  /** 手入力したタイトル(指定するとこのタイトルで案を考える) */
+  title?: string;
+  /** 短編集から渡される共有情報(共通の登場人物・世界観・使用済みの名前・これまでの話) */
+  shared?: SharedContext;
+}
+
+/** 共通の登場人物をプロンプト用のテキストにする */
+export function sharedCharactersText(chars: SharedContext["characters"]): string {
+  return chars
+    .map((c) => {
+      const lines = [
+        `■${c.name}${c.reading ? `(${c.reading})` : ""}`,
+        c.role && `役割:${c.role}`,
+        c.age && `年齢:${c.age}`,
+        c.appearance && `外見:${c.appearance}`,
+        c.personality && `性格:${c.personality}`,
+        c.speech && `口調:${c.speech}`,
+        c.background && `経歴:${c.background}`,
+        c.relations && `関係:${c.relations}`,
+        c.history && `これまでの経緯:${c.history}`,
+      ];
+      return lines.filter(Boolean).join("\n");
+    })
+    .join("\n");
+}
+
+/** 短編集の共有情報をプロンプトに差し込む指示にする */
+function sharedInstructions(shared: SharedContext | undefined, target: "concept" | "bible"): string {
+  if (!shared) return "";
+  const parts: string[] = [];
+  if (shared.world.trim()) parts.push(`【短編集の共通の世界観】\n${shared.world.trim()}\nこの世界観・舞台設定に従うこと。`);
+  if (shared.previous.trim()) parts.push(`【これまでの話(連作短編)】\n${shared.previous.trim()}\nこれまでの話の後の出来事として、矛盾しないようにすること。ただし、あらすじや本文に「第1話」などの話数や、作品の外側の言葉を書かないこと。`);
+  if (shared.characters.length) {
+    parts.push(
+      `【この話に登場する共通の登場人物(確定設定)】\n${sharedCharactersText(shared.characters)}\n` +
+        (target === "concept"
+          ? "これらの人物は、他の話にも登場する同一人物です。必ず登場させ、characters にも同じ name で含める。名前・性格・口調・関係・経緯を変えないこと。"
+          : "これらの人物は確定済みの設定で、自動的に設定資料に追加されます。characters には含めないこと。他の人物との関係や経歴は、この設定と矛盾しないようにすること。"),
+    );
+  }
+  if (shared.avoidNames.length) {
+    parts.push(`【使用済みの名前】${shared.avoidNames.join("、")}\nこれらは他の話の別人の名前なので、新しい人物には使わないこと。`);
+  }
+  return parts.join("\n\n");
+}
+
+export function conceptPrompt(req: ConceptRequest): ChatMessage[] {
+  const { keywords, note, avoidTitles, short, title } = req;
   const form = short
     ? `1話で完結する短編ライトノベル(約${short.chars.toLocaleString()}字)`
     : "長編ライトノベル(文庫本1冊分)";
+  const shared = sharedInstructions(req.shared, "concept");
   return [
     {
       role: "system",
@@ -36,12 +92,17 @@ export function conceptPrompt(keywords: string[], note: string, avoidTitles: str
       role: "user",
       content: `次のキーワードをもとに、物語の概要を考えてください。
 
-キーワード:${keywords.join("、")}
-${note.trim() ? `補足の希望:${note.trim()}\n` : ""}
+キーワード:${keywords.join("、") || "(なし)"}
+${note.trim() ? `補足の希望:${note.trim()}\n` : ""}${title?.trim() ? `タイトル:「${title.trim()}」(このタイトルは確定。変更しないこと)\n` : ""}
+${shared ? `${shared}\n` : ""}
 【条件】
 - すべてのキーワードを物語の核として自然に取り入れる。
 - 王道に収まらない、意外性のある切り口・設定にする(企画ID:${rand()})。
-- title:Web小説らしくキャッチーで、内容が伝わるタイトル(40字以内)。
+${
+  title?.trim()
+    ? `- title:必ず「${title.trim()}」とする。タイトルにふさわしい内容を考える。`
+    : "- title:Web小説らしくキャッチーで、内容が伝わるタイトル(40字以内)。"
+}
 - tagline:読者の興味を引く一行キャッチコピー(40字以内)。
 - genre:ジャンル(例:異世界ファンタジー、現代ラブコメ、ミステリー)。
 ${
@@ -78,7 +139,7 @@ export function biblePrompt(s: Story): ChatMessage[] {
       content: `次の企画から、設定資料を作成してください。${short ? `これは約${storyLength(s).toLocaleString()}字の1話完結の短編です。短編に必要な分だけを簡潔に、しかし具体的に書いてください。` : ""}
 
 ${conceptText(s)}
-
+${s.shared ? `\n${sharedInstructions(s.shared, "bible")}\n` : ""}
 【条件】
 - premise:物語の前提・核となる謎や対立・結末の方向性を200〜300字で。
 - worldview:世界観・舞台・時代・社会のルール(魔法や技術があればそのルール)を${short ? "150〜300字" : "300〜500字"}で。
@@ -277,6 +338,52 @@ ${ch.body}
 - problem:何が問題かを簡潔に。
 - replacement:quote を置き換える修正案(quote と同じ範囲を直した文字列)。置き換えで直せない場合は空文字にする。
 問題がなければ issues は空配列にしてください。`,
+    },
+  ];
+}
+
+/** 短編集の共通の登場人物(と世界観)を考える */
+export function castPrompt(opts: {
+  title: string;
+  keywords: string[];
+  note: string;
+  world: string;
+  existing: string[];
+  count: number;
+}): ChatMessage[] {
+  return [
+    {
+      role: "system",
+      content: `${EDITOR}連作短編集で、複数の話にまたがって登場するレギュラーの登場人物を考えます。出力はJSONのみ。`,
+    },
+    {
+      role: "user",
+      content: `次の短編集に登場するレギュラーの登場人物を${opts.count}名考えてください。
+
+短編集のタイトル:${opts.title || "(未定)"}
+キーワード:${opts.keywords.join("、") || "(なし)"}
+${opts.note.trim() ? `補足の希望:${opts.note.trim()}\n` : ""}${opts.world.trim() ? `世界観:${opts.world.trim()}\n` : ""}${opts.existing.length ? `既にいるレギュラー:${opts.existing.join("、")}(この人物たちと関係を持たせ、名前を重複させない)\n` : ""}
+【条件】
+- どの話にも登場させやすく、話ごとに違う一面を見せられる魅力的な人物にする(企画ID:${rand()})。
+- 各人物について name(日本語表記の氏名)、reading(読み仮名)、role(短編集での役割)、age、appearance(外見)、personality(性格)、speech(口調・一人称・二人称の呼び方の例)、background(経歴)、relations(他のレギュラーとの関係)を具体的に。
+- world:${opts.world.trim() ? "与えられた世界観をそのまま返す。" : "短編集全体の舞台・世界観を150〜300字で考える。"}`,
+    },
+  ];
+}
+
+/** 1話の本文から、共通の登場人物に起きた変化を抜き出す */
+export function castChangesPrompt(story: Story, names: string[]): ChatMessage[] {
+  const body = story.chapters.map((c) => c.body).join("\n\n");
+  return [
+    { role: "system", content: `${EDITOR}連作短編集の設定管理担当として、話をまたいで引き継ぐ情報を整理します。出力はJSONのみ。` },
+    {
+      role: "user",
+      content: `次は短編「${story.title}」の本文です。レギュラーの登場人物(${names.join("、")})について、この話で起きた出来事・状態や関係の変化・新たに判明した事実を、後の話へ引き継ぐ情報として、1人につき1〜2文(80字以内)でまとめてください。
+- 本文に書かれていないことは書かない。
+- この話に登場しなかった人物や、引き継ぐべき変化がない人物は含めない。
+- name は上の表記と完全に同じにする。
+
+${body}`,
     },
   ];
 }
