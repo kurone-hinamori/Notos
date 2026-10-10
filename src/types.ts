@@ -203,6 +203,8 @@ export interface Settings {
   temperature: number;
   numCtx: number;
   author: string;
+  /** 本文の文字の大きさ(px) */
+  bodyFontSize: number;
 }
 
 export const DEFAULT_SETTINGS: Settings = {
@@ -211,6 +213,7 @@ export const DEFAULT_SETTINGS: Settings = {
   temperature: 0.8,
   numCtx: 16384,
   author: "",
+  bodyFontSize: 15,
 };
 
 export const DEFAULT_PLAN: BookPlan = { chapters: 12, scenes: 4, charsPerScene: 2000 };

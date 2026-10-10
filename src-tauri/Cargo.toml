@@ -1,6 +1,6 @@
 [package]
 name = "notos"
-version = "0.5.0"
+version = "0.5.1"
 description = "ローカルLLMで日本語の物語を生成するデスクトップアプリ"
 authors = ["kurone-hinamori"]
 edition = "2021"

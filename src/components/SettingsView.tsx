@@ -97,6 +97,31 @@ export function SettingsView(props: { settings: Settings; generating: boolean; o
         </label>
       </section>
       <section className="card">
+        <h3>表示</h3>
+        <label className="field">
+          <span>本文の文字の大きさ:{settings.bodyFontSize}px</span>
+          <input
+            type="range"
+            min={12}
+            max={28}
+            step={1}
+            value={settings.bodyFontSize}
+            onChange={(e) => onChange({ ...settings, bodyFontSize: Number(e.target.value) })}
+          />
+        </label>
+        <p className="font-preview" style={{ fontSize: settings.bodyFontSize }}>
+          「それでも、私は行くよ」
+          <br />
+          彼女はそう言って、雨の上がった通りへ歩き出した。
+        </p>
+        <small className="muted">「本文」タブの入力欄と、生成中のプレビューに反映されます(EPUB の文字の大きさは、読むアプリ側で調整してください)。</small>
+        <div className="row">
+          <button className="small" disabled={settings.bodyFontSize === 15} onClick={() => onChange({ ...settings, bodyFontSize: 15 })}>
+            標準(15px)に戻す
+          </button>
+        </div>
+      </section>
+      <section className="card">
         <h3>著者</h3>
         <Field label="筆名(EPUB の著者名になります)" value={settings.author} onChange={(v) => onChange({ ...settings, author: v })} />
       </section>

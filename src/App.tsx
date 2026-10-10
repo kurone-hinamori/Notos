@@ -30,6 +30,11 @@ export default function App() {
 
   useEffect(() => persistSettings(settings), [settings]);
 
+  // 本文の文字の大きさを画面全体に反映する
+  useEffect(() => {
+    document.documentElement.style.setProperty("--body-font-size", `${settings.bodyFontSize}px`);
+  }, [settings.bodyFontSize]);
+
   // タイトルバーにバージョンを表示する
   useEffect(() => {
     getVersion()
