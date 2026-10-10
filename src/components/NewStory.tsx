@@ -30,7 +30,7 @@ export function NewStory(props: { settings: Settings; seed?: Seed; onCreate: (s:
         state={state}
         update={setState}
         confirmLabel="この内容で物語を作る →"
-        onConfirm={(p) => void props.onCreate(createStory(p.concept, p.keywords, settings.author, p.note))}
+        onConfirm={(p) => void props.onCreate(createStory(p.concept, p.keywords, settings.author, p.note, p.lines))}
       />
     </div>
   );

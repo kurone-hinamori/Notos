@@ -1,9 +1,10 @@
 import { useState } from "react";
-import type { Anthology, AnthologyMode, Settings, SharedCharacter } from "../types";
+import type { Anthology, AnthologyMode, EntryKind, Settings, SharedCharacter, SharedEntry } from "../types";
 import { createAnthology } from "../lib/storage";
 import { Field, Section } from "./ui";
 import { cleanKeywords } from "./ConceptGacha";
 import { CastEditor } from "./CastEditor";
+import { SharedEntriesEditor } from "./SharedEntriesEditor";
 import { ModeSelect } from "./AnthologyDetail";
 
 function NumberInput(props: { label: string; value: number; min: number; max: number; step?: number; onChange: (n: number) => void }) {
@@ -32,6 +33,7 @@ export function NewAnthology(props: { settings: Settings; onCreate: (a: Antholog
   const [mode, setMode] = useState<AnthologyMode>("series");
   const [world, setWorld] = useState("");
   const [cast, setCast] = useState<SharedCharacter[]>([]);
+  const [shared, setShared] = useState<Partial<Record<EntryKind, SharedEntry[]>>>({});
   const kwList = cleanKeywords(keywords.split(/[,、，\s]+/));
   const perEpisode = scenes * chars;
 
@@ -48,6 +50,7 @@ export function NewAnthology(props: { settings: Settings; onCreate: (a: Antholog
         mode,
         world,
         cast,
+        shared,
       }),
     );
 
@@ -58,8 +61,9 @@ export function NewAnthology(props: { settings: Settings; onCreate: (a: Antholog
       </header>
       <div className="stack">
         <p className="muted">
-          1話ずつガチャを引いて概要(タイトル・あらすじ・登場人物)を決め、1話完結の短編として本文を生成します。
-          各話の執筆ではその話の設定資料だけを参照するので、話数が多くても内容が欠けにくくなります。
+          1話完結の短編をまとめた本を作ります。各話の概要(タイトル・あらすじ・登場人物)は、ガチャで1話ずつ決めることも、
+          「おまかせ」で前の話が書き上がるたびに自動で作らせることもできます。
+          各話の執筆ではその話の設定資料と共通の設定だけを参照するので、話数が多くても内容が欠けにくくなります。
         </p>
         <Section title="短編集の情報">
           <Field label="短編集のタイトル(あとで変更できます)" value={title} placeholder="無題の短編集" onChange={setTitle} />
@@ -99,6 +103,17 @@ export function NewAnthology(props: { settings: Settings; onCreate: (a: Antholog
             onWorld={setWorld}
           />
         </Section>
+        <Section title="共通の場所・品物・用語(任意。あとから追加・変更できます)">
+          <p className="muted small-text">
+            複数の話に出てくる場所や重要な品物を決めておくと、話ごとに設定が変わるのを防げます。
+          </p>
+          <SharedEntriesEditor
+            shared={shared}
+            onChange={(fn) => setShared(fn)}
+            settings={props.settings}
+            context={{ title, keywords: kwList, note, world, cast: cast.map((c) => c.name) }}
+          />
+        </Section>
         <Section title="規模">
           <div className="three-col">
             <NumberInput label="話数" value={episodes} min={1} max={30} onChange={setEpisodes} />
@@ -112,7 +127,7 @@ export function NewAnthology(props: { settings: Settings; onCreate: (a: Antholog
         </Section>
         <div className="row">
           <button className="primary big" onClick={create}>
-            短編集を作成して、第1話のガチャへ →
+            短編集を作成する →
           </button>
         </div>
       </div>

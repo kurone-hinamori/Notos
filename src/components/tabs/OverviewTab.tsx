@@ -1,6 +1,6 @@
 import type { Story } from "../../types";
 import type { Mutate } from "../StoryDetail";
-import { Field, Section } from "../ui";
+import { Field, LinesField, Section } from "../ui";
 
 export function OverviewTab({ story, mutate }: { story: Story; mutate: Mutate }) {
   return (
@@ -24,6 +24,7 @@ export function OverviewTab({ story, mutate }: { story: Story; mutate: Mutate })
           onChange={(v) => mutate((s) => void (s.note = v))}
         />
         <Field label="あらすじ" rows={8} value={story.synopsis} onChange={(v) => mutate((s) => void (s.synopsis = v))} />
+        <LinesField lines={story.lines ?? []} story={story} onChange={(lines) => mutate((s) => void (s.lines = lines))} />
       </Section>
 
       <Section

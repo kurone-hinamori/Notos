@@ -35,7 +35,14 @@ export interface ConceptRequest {
   title?: string;
   /** 短編集から渡される共有情報(共通の登場人物・世界観・使用済みの名前・これまでの話) */
   shared?: SharedContext;
+  /** 使ってほしいセリフ */
+  lines?: string[];
 }
+
+const KIND_LABEL = { places: "場所", items: "品物", terms: "用語" } as const;
+
+/** 使ってほしいセリフをプロンプト用の箇条書きにする */
+const linesText = (lines: string[]) => lines.map((l) => `- ${l}`).join("\n");
 
 /** 共通の登場人物をプロンプト用のテキストにする */
 export function sharedCharactersText(chars: SharedContext["characters"]): string {
@@ -71,6 +78,16 @@ function sharedInstructions(shared: SharedContext | undefined, target: "concept"
           : "これらの人物は確定済みの設定で、自動的に設定資料に追加されます。characters には含めないこと。他の人物との関係や経歴は、この設定と矛盾しないようにすること。"),
     );
   }
+  if (shared.entries?.length) {
+    parts.push(
+      `【短編集の共通の設定(場所・品物・用語)】\n${shared.entries
+        .map((e) => `■${e.name}(${KIND_LABEL[e.kind]}):${e.description}${e.history ? `(これまでの経緯:${e.history})` : ""}`)
+        .join("\n")}\n` +
+        (target === "concept"
+          ? "これらは他の話と共通の設定です。物語に必要なものだけを登場させる。登場させる場合は、名称・設定・経緯を変えないこと。同じ役割の別のものを新しく作らないこと。"
+          : "これらは確定済みの設定で、自動的に設定資料に追加されます。places・items・terms には含めないこと。同じ役割の別のものを新しく作らないこと。"),
+    );
+  }
   if (shared.avoidNames.length) {
     parts.push(`【使用済みの名前】${shared.avoidNames.join("、")}\nこれらは他の話の別人の名前なので、新しい人物には使わないこと。`);
   }
@@ -94,7 +111,11 @@ export function conceptPrompt(req: ConceptRequest): ChatMessage[] {
 
 キーワード:${keywords.join("、") || "(なし)"}
 ${note.trim() ? `補足の希望:${note.trim()}\n` : ""}${title?.trim() ? `タイトル:「${title.trim()}」(このタイトルは確定。変更しないこと)\n` : ""}
-${shared ? `${shared}\n` : ""}
+${shared ? `${shared}\n` : ""}${
+        req.lines?.length
+          ? `\n【使ってほしいセリフ】\n${linesText(req.lines)}\nこれらのセリフは本文で必ずそのまま使います。どのセリフも自然に口にされる場面が生まれるような人物と展開にすること。\n`
+          : ""
+      }
 【条件】
 - すべてのキーワードを物語の核として自然に取り入れる。
 - 王道に収まらない、意外性のある切り口・設定にする(企画ID:${rand()})。
@@ -178,7 +199,16 @@ ${bibleToText(s.bible)}
 - 各章は title(章題)、plan(その章のあらすじ。150〜250字)、beats(場面ごとの展開。要素数は必ず${plan.scenes}。各60〜120字で、具体的な出来事・会話の要点・感情の動きを書く)。
 - 起承転結を意識し、前半で世界と人物を魅力的に提示し、中盤で状況を転換させ、終盤で伏線を回収して、最終章で物語を完結させる。
 - 設定資料の人物・地名・品物を活用し、各章の出来事が前後の章と因果でつながるようにする。矛盾や唐突な展開を避ける。
-- 最終章の最後の場面で、あらすじの結末にふさわしい形で物語を締めくくる。`,
+- 最終章の最後の場面で、あらすじの結末にふさわしい形で物語を締めくくる。${
+        s.lines?.length
+          ? `
+
+【使ってほしいセリフ】
+${linesText(s.lines)}
+- これらのセリフは本文で必ず一字一句そのまま使う。それぞれのセリフが最も自然に、効果的に口にされる場面を決め、その場面の beats に、誰がどんな状況でそのセリフを言うのかを書き込むこと。
+- lineScenes に、すべてのセリフについて、line(上のセリフをそのまま)、chapter(章の番号。1始まり)、scene(その章の中の場面の番号。1始まり)を入れること。`
+          : "\n- lineScenes は空配列にする。"
+      }`,
     },
   ];
 }
@@ -190,6 +220,8 @@ export function scenePrompt(opts: {
   target: number;
   previousTail: string;
   existingInScene?: string;
+  /** この場面で必ず使うセリフ(まだ本文に入っていないもの) */
+  lines?: string[];
 }): ChatMessage[] {
   const { story, ci, si, target, previousTail, existingInScene } = opts;
   const ch = story.chapters[ci];
@@ -231,7 +263,16 @@ ${
     : `- 物語を勝手に終わらせない。この場面は${next && si === ch.beats.length - 1 ? `次の章(${next.title})` : "次の場面"}へ続く途中経過である。`
 }
 - 描写・心理・会話を丁寧に書き込み、あっさり要約せず、場面として具体的に描く。
-本文のみを出力してください。`;
+${
+  opts.lines?.length
+    ? `
+【この場面で必ず使うセリフ】
+${linesText(opts.lines)}
+- 上のセリフを、この場面の会話として必ず使うこと。かぎ括弧の中の言葉は一字一句変えない(言い換え・省略・語尾の変更をしない)。
+- 話者が書かれている場合はその人物に言わせる。セリフが自然に出てくるように、直前の会話や状況を組み立てること。
+`
+    : ""
+}本文のみを出力してください。`;
 
   return [
     { role: "system", content: system },
@@ -279,7 +320,7 @@ ${ch.body}
   ];
 }
 
-export function proofreadChunkPrompt(bible: Bible, chunk: string): ChatMessage[] {
+export function proofreadChunkPrompt(bible: Bible, chunk: string, keepLines: string[] = []): ChatMessage[] {
   const names = [
     ...bible.characters.map((c) => `${c.name}${c.reading ? `(${c.reading})` : ""}`),
     ...bible.places.map((c) => c.name),
@@ -302,7 +343,9 @@ export function proofreadChunkPrompt(bible: Bible, chunk: string): ChatMessage[]
 
 【守ること】
 - 内容・展開・文体・口調・段落(改行)は変えない。文章を書き足したり削ったりしない。
-- 問題がない箇所は一字も変えない。
+- 問題がない箇所は一字も変えない。${
+        keepLines.length ? `\n- 次のセリフは作者が指定したものなので、一字も変えない:${keepLines.map((l) => `「${l}」`).join("")}` : ""
+      }
 - 修正後の本文のみを出力する。説明や前置きは不要。
 
 【本文】
@@ -371,19 +414,84 @@ ${opts.note.trim() ? `補足の希望:${opts.note.trim()}\n` : ""}${opts.world.t
   ];
 }
 
-/** 1話の本文から、共通の登場人物に起きた変化を抜き出す */
+/** 1話の本文から、共通の設定(登場人物・場所・品物・用語)に起きた変化を抜き出す */
 export function castChangesPrompt(story: Story, names: string[]): ChatMessage[] {
   const body = story.chapters.map((c) => c.body).join("\n\n");
+  // この話の設定資料に追記された内容(本文で判明した事実)も手がかりとして渡す
+  const b = story.bible;
+  const notes = [...b.characters, ...b.places, ...b.items, ...b.terms]
+    .filter((x) => names.includes(x.name) && x.notes?.trim())
+    .map((x) => `- ${x.name}:${x.notes.trim()}`)
+    .join("\n");
   return [
     { role: "system", content: `${EDITOR}連作短編集の設定管理担当として、話をまたいで引き継ぐ情報を整理します。出力はJSONのみ。` },
     {
       role: "user",
-      content: `次は短編「${story.title}」の本文です。レギュラーの登場人物(${names.join("、")})について、この話で起きた出来事・状態や関係の変化・新たに判明した事実を、後の話へ引き継ぐ情報として、1人につき1〜2文(80字以内)でまとめてください。
+      content: `次は短編「${story.title}」の本文です。短編集の共通の設定(${names.join("、")})のそれぞれについて、この話で起きた出来事・状態や関係の変化・持ち主や場所の変化・新たに判明した事実を、後の話へ引き継ぐ情報として、1件につき1〜3文(120字以内)でまとめてください。
 - 本文に書かれていないことは書かない。
-- この話に登場しなかった人物や、引き継ぐべき変化がない人物は含めない。
+- この話に登場しなかったものや、引き継ぐべき変化がないものは含めない。
+- 後の話を書く人が知らないと矛盾が起きる事実(壊れた、失った、手に入れた、正体が分かった、関係が変わった など)を優先する。
 - name は上の表記と完全に同じにする。
-
+${notes ? `\n【この話の設定資料に追記された内容(参考)】\n${notes}\n` : ""}
+【本文】
 ${body}`,
+    },
+  ];
+}
+
+/** 短編集の共通の設定(場所・品物・用語)を考える */
+export function entriesPrompt(opts: {
+  kind: "places" | "items" | "terms";
+  title: string;
+  keywords: string[];
+  note: string;
+  world: string;
+  cast: string[];
+  existing: string[];
+  count: number;
+}): ChatMessage[] {
+  const what = {
+    places: "何度も舞台になる場所",
+    items: "物語の鍵になる重要な品物・道具",
+    terms: "固有の用語・組織・決まりごと",
+  }[opts.kind];
+  return [
+    { role: "system", content: `${EDITOR}連作短編集で、複数の話にまたがって登場する共通の設定を考えます。出力はJSONのみ。` },
+    {
+      role: "user",
+      content: `次の短編集で使う、${what}を${opts.count}件考えてください。
+
+短編集のタイトル:${opts.title || "(未定)"}
+キーワード:${opts.keywords.join("、") || "(なし)"}
+${opts.note.trim() ? `補足の希望:${opts.note.trim()}\n` : ""}${opts.world.trim() ? `世界観:${opts.world.trim()}\n` : ""}${opts.cast.length ? `レギュラーの登場人物:${opts.cast.join("、")}\n` : ""}${opts.existing.length ? `既にある設定:${opts.existing.join("、")}(重複させない)\n` : ""}
+【条件】
+- どの話でも同じものとして登場させられるよう、名称と設定をはっきり決める(企画ID:${rand()})。
+- name は名称、description は外見・特徴・由来・できること/できないことなどを80〜160字で具体的に。`,
+    },
+  ];
+}
+
+/** 書いた場面に、指定のセリフを組み込んで書き直す */
+export function insertLinePrompt(story: Story, scene: string, lines: string[]): ChatMessage[] {
+  return [
+    {
+      role: "system",
+      content: `${EDITOR}小説の一場面を、指定されたセリフを含むように手直しします。\n\n【設定資料】\n${bibleToText(story.bible)}\n\n${STYLE_GUIDE}`,
+    },
+    {
+      role: "user",
+      content: `次の場面の本文には、作者が指定したセリフがまだ入っていません。場面の流れ・長さ・文体をできるだけ保ったまま、次のセリフが自然に口にされるように会話を足すか直して、場面全体を書き直してください。
+
+【必ず入れるセリフ】
+${linesText(lines)}
+- かぎ括弧の中の言葉は一字一句変えない(言い換え・省略・語尾の変更をしない)。
+- 話者が書かれている場合はその人物に言わせる。
+- それ以外の部分はなるべく変えない。場面を短くしない。
+
+【場面の本文】
+${scene}
+
+書き直した場面の本文のみを出力してください。`,
     },
   ];
 }

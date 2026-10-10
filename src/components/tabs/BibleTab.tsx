@@ -26,6 +26,10 @@ export function BibleTab(props: {
   onPromote?: (c: CharacterSheet) => void;
   /** 短編集の話の場合:共通の登場人物かどうか */
   isShared?: (name: string) => boolean;
+  /** 短編集の話の場合:場所・品物・用語を共通の設定に登録する */
+  onPromoteEntry?: (kind: EntryKey, e: Entry) => void;
+  /** 短編集の話の場合:共通の設定かどうか */
+  isSharedEntry?: (kind: EntryKey, name: string) => boolean;
 }) {
   const { story, mutate, running } = props;
   const b = story.bible;
@@ -54,6 +58,19 @@ export function BibleTab(props: {
         <div key={i} className="entry">
           <div className="row">
             <input className="grow" value={e.name} onChange={(ev) => mutate((s) => void (s.bible[key][i].name = ev.target.value))} />
+            {props.isSharedEntry?.(key, e.name) ? (
+              <span className="tag">共通の設定</span>
+            ) : (
+              props.onPromoteEntry && (
+                <button
+                  className="small"
+                  title="この項目を短編集の共通の設定にして、他の話でも同じものとして扱います"
+                  onClick={() => props.onPromoteEntry?.(key, e)}
+                >
+                  共通の設定に登録
+                </button>
+              )
+            )}
             <button className="small danger" onClick={() => mutate((s) => void s.bible[key].splice(i, 1))}>
               削除
             </button>

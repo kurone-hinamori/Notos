@@ -1,4 +1,4 @@
-import type { Bible, BookPlan, Chapter, CharacterSheet, Concept, Issue, Settings, Story } from "../types";
+import type { Bible, BookPlan, Chapter, CharacterSheet, Concept, Entry, EntryKind, Issue, Settings, SharedContext, Story } from "../types";
 import { emptyBible } from "../types";
 import { chat, chatJson } from "./ollama";
 import {
@@ -12,6 +12,8 @@ import {
   scenePrompt,
   castPrompt,
   castChangesPrompt,
+  entriesPrompt,
+  insertLinePrompt,
   type ConceptRequest,
 } from "./prompts";
 import {
@@ -23,8 +25,9 @@ import {
   outlineSchema,
   castSchema,
   castChangesSchema,
+  entriesSchema,
 } from "./schemas";
-import { cleanProse, countChars, joinScenes, sameName, splitChunks, tail } from "./text";
+import { cleanProse, countChars, hasLine, joinScenes, lineCore, sameName, splitChunks, tail } from "./text";
 
 /** パイプラインが物語を読み書きするための窓口(UI 側が保存を担当する)。 */
 export interface Ctx {
@@ -85,9 +88,9 @@ async function stepBible(ctx: Ctx) {
         (raw.characters ?? []).map((c) => ({ ...c, notes: "" })),
         s.shared?.characters ?? [],
       ),
-      places: (raw.places ?? []).map((e) => ({ ...e, notes: "" })),
-      items: (raw.items ?? []).map((e) => ({ ...e, notes: "" })),
-      terms: (raw.terms ?? []).map((e) => ({ ...e, notes: "" })),
+      places: mergeSharedEntries("places", raw.places, s.shared),
+      items: mergeSharedEntries("items", raw.items, s.shared),
+      terms: mergeSharedEntries("terms", raw.terms, s.shared),
       generated: true,
     };
   });
@@ -100,7 +103,32 @@ function mergeShared(chars: CharacterSheet[], shared: (CharacterSheet & { histor
   return [...fixed, ...chars.filter((c) => !fixed.some((f) => sameName(f.name, c.name)))];
 }
 
+/** 短編集の共通の場所・品物・用語を設定資料の先頭に入れる(同名のものがあれば共通設定で置き換える)。 */
+function mergeSharedEntries(kind: EntryKind, list: Omit<Entry, "notes">[] | undefined, shared: SharedContext | undefined): Entry[] {
+  const fixed = (shared?.entries ?? [])
+    .filter((e) => e.kind === kind)
+    .map((e) => ({ name: e.name, description: e.description, notes: e.history ? `これまでの経緯:${e.history}` : "" }));
+  const own = (list ?? []).filter((e) => !fixed.some((f) => sameName(f.name, e.name))).map((e) => ({ ...e, notes: "" }));
+  return [...fixed, ...own];
+}
+
 // ---------------------------------------------------------------- 短編集の共通の登場人物
+
+/** 短編集の共通の設定(場所・品物・用語)の案を考える */
+export async function generateEntries(
+  settings: Settings,
+  opts: Parameters<typeof entriesPrompt>[0],
+  signal?: AbortSignal,
+): Promise<Entry[]> {
+  const r = await chatJson<{ entries: { name: string; description: string }[] }>(settings, {
+    messages: entriesPrompt(opts),
+    schema: entriesSchema,
+    temperature: Math.min(1.1, settings.temperature + 0.2),
+    signal,
+  });
+  return (r.entries ?? []).filter((e) => e.name?.trim()).map((e) => ({ name: e.name.trim(), description: e.description ?? "", notes: "" }));
+}
+
 
 /** 短編集の共通の登場人物の案を考える */
 export async function generateCast(
@@ -137,7 +165,10 @@ export async function summarizeCastChanges(ctx: Ctx, names: string[]): Promise<{
 async function stepOutline(ctx: Ctx) {
   ctx.stage("章構成を作成中");
   const plan: BookPlan = ctx.get().plan;
-  const raw = await chatJson<{ chapters: { title: string; plan: string; beats: string[] }[] }>(ctx.settings, {
+  const raw = await chatJson<{
+    chapters: { title: string; plan: string; beats: string[] }[];
+    lineScenes?: { line: string; chapter: number; scene: number }[];
+  }>(ctx.settings, {
     messages: outlinePrompt(ctx.get(), plan),
     schema: outlineSchema,
     signal: ctx.signal,
@@ -155,9 +186,43 @@ async function stepOutline(ctx: Ctx) {
       digest: "",
       proofread: false,
       issues: [],
+      lines: [],
     }));
+    // モデルが決めたセリフの場面を取り込む(指定したセリフと一致し、存在する場面を指すものだけ)
+    for (const a of raw.lineScenes ?? []) {
+      const line = (s.lines ?? []).find((l) => lineCore(l) === lineCore(a.line ?? "") || l === a.line?.trim());
+      const ch = s.chapters[(a.chapter ?? 0) - 1];
+      const scene = (a.scene ?? 0) - 1;
+      if (!line || !ch || scene < 0 || scene >= ch.beats.length) continue;
+      if (s.chapters.some((c) => c.lines?.some((x) => x.text === line))) continue;
+      ch.lines!.push({ text: line, scene });
+    }
+    assignLines(s);
   });
   ctx.log(`全${chapters.length}章の構成を作成しました`);
+}
+
+/**
+ * 使う場面が決まっていないセリフを、まだ書いていない場面に割り当てる。
+ * モデルが場面を決めなかった場合や、構成を作った後にセリフを追加した場合のための保険。
+ */
+function assignLines(s: Story) {
+  const body = s.chapters.map((c) => c.body).join("\n");
+  const pending = (s.lines ?? []).filter(
+    (l) => !hasLine(body, l) && !s.chapters.some((c) => c.lines?.some((x) => x.text === l)),
+  );
+  if (!pending.length) return;
+  const slots: { ci: number; si: number }[] = [];
+  s.chapters.forEach((c, ci) => {
+    for (let si = c.sceneDone; si < c.beats.length; si++) slots.push({ ci, si });
+  });
+  if (!slots.length) return;
+  pending.forEach((line, k) => {
+    // 物語全体にばらけるように、残りの場面へ等間隔に置く
+    const slot = slots[Math.min(slots.length - 1, Math.floor(((k + 1) * slots.length) / (pending.length + 1)))];
+    const ch = s.chapters[slot.ci];
+    (ch.lines ??= []).push({ text: line, scene: slot.si });
+  });
 }
 
 // ---------------------------------------------------------------- 本文
@@ -174,6 +239,8 @@ function previousTail(story: Story, ci: number): string {
 async function writeScene(ctx: Ctx, ci: number, si: number) {
   const { settings } = ctx;
   const target = ctx.get().plan.charsPerScene;
+  // この場面で使うと決めたセリフ
+  const lines = (ctx.get().chapters[ci].lines ?? []).filter((l) => l.scene === si).map((l) => l.text);
   let scene = "";
   // 目標の約7割に満たない場合は最大2回まで書き足す
   for (let pass = 0; pass < 3; pass++) {
@@ -187,6 +254,7 @@ async function writeScene(ctx: Ctx, ci: number, si: number) {
         target: pass === 0 ? target : Math.max(600, target - countChars(scene)),
         previousTail: scene ? tail(scene, 900) : previousTail(story, ci),
         existingInScene: scene || undefined,
+        lines: lines.filter((l) => !hasLine(scene, l)),
       }),
       signal: ctx.signal,
       numPredict: Math.round(target * 3),
@@ -199,6 +267,29 @@ async function writeScene(ctx: Ctx, ci: number, si: number) {
     if (countChars(scene) >= target * 0.7) break;
   }
   if (!scene) throw new Error("本文を生成できませんでした");
+
+  // 指定のセリフが入っていなければ、セリフを組み込んで書き直す(最大2回)
+  for (let attempt = 0; attempt < 2; attempt++) {
+    const missing = lines.filter((l) => !hasLine(scene, l));
+    if (!missing.length) break;
+    throwIfAborted(ctx);
+    ctx.stage(`第${ci + 1}章 場面${si + 1} に指定のセリフを組み込み中`);
+    const raw = await chat(settings, {
+      messages: insertLinePrompt(ctx.get(), scene, missing),
+      signal: ctx.signal,
+      numPredict: Math.round(scene.length * 2.5) + 512,
+      temperature: 0.5,
+      onToken: (t) => ctx.stream(t),
+    });
+    const cand = cleanProse(raw);
+    // 既に入っていたセリフを落とさず、極端に短く・長くなっていない場合だけ採用する
+    const kept = lines.every((l) => !hasLine(scene, l) || hasLine(cand, l));
+    const gained = missing.some((l) => hasLine(cand, l));
+    if (cand && kept && gained && cand.length > scene.length * 0.8 && cand.length < scene.length * 1.6) scene = cand;
+  }
+  const unused = lines.filter((l) => !hasLine(scene, l));
+  if (unused.length) ctx.log(`第${ci + 1}章 場面${si + 1}:指定のセリフを入れられませんでした(${unused.join(" / ")})`);
+
   ctx.update((s) => {
     const ch = s.chapters[ci];
     ch.body = joinScenes(ch.body, scene);
@@ -276,6 +367,8 @@ async function stepBibleSync(ctx: Ctx, ci: number) {
 }
 
 async function stepChapter(ctx: Ctx, ci: number) {
+  // 構成を作った後に追加されたセリフにも、使う場面を割り当てる
+  ctx.update((s) => assignLines(s));
   for (;;) {
     throwIfAborted(ctx);
     const ch = ctx.get().chapters[ci];
@@ -300,14 +393,17 @@ async function proofreadBody(ctx: Ctx, ci: number): Promise<number> {
   const chunks = splitChunks(body);
   const out: string[] = [];
   let changed = 0;
+  const required = ctx.get().lines ?? [];
   for (let i = 0; i < chunks.length; i++) {
     throwIfAborted(ctx);
     ctx.stage(`第${ci + 1}章を校閲中 (${i + 1}/${chunks.length})`);
     const original = chunks[i];
     let fixed = original;
+    // このかたまりに入っている指定のセリフは、校閲で書き換えさせない
+    const protectedLines = required.filter((l) => hasLine(original, l));
     try {
       const raw = await chat(ctx.settings, {
-        messages: proofreadChunkPrompt(ctx.get().bible, original),
+        messages: proofreadChunkPrompt(ctx.get().bible, original, protectedLines.map(lineCore)),
         signal: ctx.signal,
         temperature: 0.2,
         numPredict: Math.round(original.length * 2.5) + 256,
@@ -317,7 +413,8 @@ async function proofreadBody(ctx: Ctx, ci: number): Promise<number> {
       // 暴走・要約・加筆を避けるため、長さと段落数が大きく変わった結果は採用しない
       const ratio = cand.length / original.length;
       const paraRatio = cand.split("\n").length / original.split("\n").length;
-      if (cand && ratio > 0.85 && ratio < 1.15 && paraRatio > 0.8 && paraRatio < 1.25) fixed = cand;
+      const linesKept = protectedLines.every((l) => hasLine(cand, l));
+      if (cand && linesKept && ratio > 0.85 && ratio < 1.15 && paraRatio > 0.8 && paraRatio < 1.25) fixed = cand;
     } catch (e) {
       if (ctx.signal.aborted) throw e;
     }
@@ -364,12 +461,26 @@ async function checkConsistency(ctx: Ctx, ci: number) {
       if (!quote || !it.problem?.trim()) continue;
       const replacement = it.replacement?.trim() ?? "";
       const occurrences = ch.body.split(quote).length - 1;
-      const canApply = occurrences === 1 && replacement !== "" && replacement !== quote;
+      const fixedBody = ch.body.replace(quote, () => replacement);
+      // 指定のセリフを書き換えてしまう修正は自動では適用しない
+      const keepsLines = (s.lines ?? []).every((l) => !hasLine(ch.body, l) || hasLine(fixedBody, l));
+      const canApply = occurrences === 1 && replacement !== "" && replacement !== quote && keepsLines;
       if (canApply) {
-        ch.body = ch.body.replace(quote, () => replacement);
+        ch.body = fixedBody;
         applied++;
       }
       issues.push({ quote, problem: it.problem.trim(), replacement, applied: canApply });
+    }
+    // この章で使うと決めたセリフが本文に入っていなければ、指摘として残す
+    for (const l of ch.lines ?? []) {
+      if (!hasLine(ch.body, l.text)) {
+        issues.push({
+          quote: "",
+          problem: `指定したセリフ「${lineCore(l.text)}」が本文に入っていません(場面${l.scene + 1}で使う予定でした)。本文に書き足すか、この章を再生成してください。`,
+          replacement: "",
+          applied: false,
+        });
+      }
     }
     ch.issues = issues;
   });

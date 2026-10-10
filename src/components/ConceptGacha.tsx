@@ -2,6 +2,7 @@ import type { ReactNode } from "react";
 import type { Concept, Settings, SharedContext } from "../types";
 import { pullConcept } from "../lib/pipeline";
 import type { ShortSpec } from "../lib/prompts";
+import { parseLines } from "../lib/text";
 
 /** 前後の空白を除き、空欄と重複を取り除く。 */
 export function cleanKeywords(list: string[]): string[] {
@@ -12,6 +13,8 @@ export interface Pull {
   concept: Concept;
   keywords: string[];
   note: string;
+  /** 使ってほしいセリフ */
+  lines: string[];
   /** 複製元・やり直し前の案 */
   origin?: boolean;
 }
@@ -24,6 +27,8 @@ export interface GachaState {
   keywords: string[];
   /** 手入力したタイトル(空ならガチャで考える) */
   title: string;
+  /** 使ってほしいセリフ(1行に1つ) */
+  lines: string;
   draft: string;
   note: string;
   pulls: Pull[];
@@ -33,13 +38,20 @@ export interface GachaState {
   abort?: AbortController;
 }
 
-export function initialGacha(keywords: string[], note: string, origin?: Concept): GachaState {
+export function initialGacha(
+  keywords: string[],
+  note: string,
+  origin?: Concept,
+  more: { title?: string; lines?: string[] } = {},
+): GachaState {
+  const lines = more.lines ?? [];
   return {
     keywords: [...keywords],
-    title: "",
+    title: more.title ?? "",
+    lines: lines.join("\n"),
     draft: "",
     note,
-    pulls: origin ? [{ concept: origin, keywords: [...keywords], note, origin: true }] : [],
+    pulls: origin ? [{ concept: origin, keywords: [...keywords], note, lines, origin: true }] : [],
     index: 0,
     busy: false,
     error: "",
@@ -76,16 +88,17 @@ export function ConceptGacha(props: {
     }
     const abort = new AbortController();
     const note = st.note;
+    const lines = parseLines(st.lines);
     update((s) => ({ ...s, keywords: kws, draft: "", error: "", busy: true, abort }));
     try {
       const avoid = [...st.pulls.slice(0, 8).map((p) => p.concept.title), ...(props.avoidTitles ?? [])];
       const concept = await pullConcept(
         props.settings,
-        { keywords: kws, note, avoidTitles: avoid, short: props.short, title: st.title, shared: props.shared },
+        { keywords: kws, note, avoidTitles: avoid, short: props.short, title: st.title, shared: props.shared, lines },
         abort.signal,
       );
       if (!concept.title || !concept.synopsis) throw new Error("うまく生成できませんでした。もう一度引いてください。");
-      update((s) => ({ ...s, busy: false, abort: undefined, pulls: [{ concept, keywords: kws, note }, ...s.pulls], index: 0 }));
+      update((s) => ({ ...s, busy: false, abort: undefined, pulls: [{ concept, keywords: kws, note, lines }, ...s.pulls], index: 0 }));
     } catch (e) {
       const message = abort.signal.aborted ? "" : e instanceof Error ? e.message : String(e);
       update((s) => ({ ...s, busy: false, abort: undefined, error: message }));
@@ -158,6 +171,18 @@ export function ConceptGacha(props: {
             onChange={(e) => {
               const v = e.target.value;
               update((s) => ({ ...s, note: v }));
+            }}
+          />
+        </label>
+        <label className="field">
+          <span>使ってほしいセリフ(任意・1行に1つ。本文で必ずそのまま使います)</span>
+          <textarea
+            rows={3}
+            value={st.lines}
+            placeholder={"例:「それでも、私は行くよ」\n例:レン「約束は、破るためにあるんじゃない」"}
+            onChange={(e) => {
+              const v = e.target.value;
+              update((s) => ({ ...s, lines: v }));
             }}
           />
         </label>

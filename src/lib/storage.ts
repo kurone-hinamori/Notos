@@ -1,5 +1,5 @@
 import { invoke } from "@tauri-apps/api/core";
-import type { Anthology, AnthologyMode, Concept, Doc, Settings, SharedCharacter, Story, StorySummary } from "../types";
+import type { Anthology, AnthologyMode, Concept, Doc, EntryKind, Settings, SharedCharacter, SharedEntry, Story, StorySummary } from "../types";
 import { DEFAULT_PLAN, DEFAULT_SETTINGS, emptyBible } from "../types";
 import { newId } from "./text";
 
@@ -8,7 +8,7 @@ export const loadStory = (id: string) => invoke<Doc>("load_story", { id });
 export const saveStory = (story: Doc) => invoke<void>("save_story", { story });
 export const deleteStory = (id: string) => invoke<void>("delete_story", { id });
 
-export function createStory(concept: Concept, keywords: string[], author: string, note = ""): Story {
+export function createStory(concept: Concept, keywords: string[], author: string, note = "", lines: string[] = []): Story {
   const now = new Date().toISOString();
   return {
     version: 1,
@@ -17,6 +17,7 @@ export function createStory(concept: Concept, keywords: string[], author: string
     updatedAt: now,
     keywords,
     note,
+    lines,
     title: concept.title,
     tagline: concept.tagline,
     genre: concept.genre,
@@ -54,6 +55,7 @@ export function createAnthology(opts: {
   mode: AnthologyMode;
   world: string;
   cast: SharedCharacter[];
+  shared: Partial<Record<EntryKind, SharedEntry[]>>;
 }): Anthology {
   const now = new Date().toISOString();
   const base = { keywords: opts.keywords, note: opts.note, author: opts.author, plan: { scenes: opts.scenes, charsPerScene: opts.charsPerScene } };
@@ -68,6 +70,9 @@ export function createAnthology(opts: {
     mode: opts.mode,
     world: opts.world,
     cast: opts.cast,
+    shared: opts.shared,
+    autoConcept: true,
+    stopOnIssues: false,
     episodes: Array.from({ length: opts.episodes }, () => createEpisode(base)),
   };
 }

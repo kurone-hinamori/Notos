@@ -1,6 +1,5 @@
-import { useState } from "react";
-import type { Anthology, AnthologyMode, CharacterSheet, Concept, Settings, SharedCharacter, Story } from "../types";
-import { emptyBible } from "../types";
+import { useEffect, useState } from "react";
+import type { Anthology, AnthologyMode, CharacterSheet, Concept, Entry, EntryKind, Settings, SharedCharacter, Story } from "../types";
 import type { Job, RunState } from "../hooks";
 import type { Task } from "../lib/pipeline";
 import { createEpisode, isUndecided } from "../lib/storage";
@@ -15,8 +14,19 @@ import { BibleTab } from "./tabs/BibleTab";
 import { ExportTab } from "./tabs/ExportTab";
 import { Field, Section } from "./ui";
 import { CastEditor } from "./CastEditor";
-import { castOf, isSeries, sharedContextFor, toShared } from "../lib/anthology";
-import { sameName } from "../lib/text";
+import {
+  applyConcept,
+  castOf,
+  clearHistory,
+  isSeries,
+  resetEpisode,
+  sharedContextFor,
+  sharedEntries,
+  toShared,
+  toSharedEntry,
+} from "../lib/anthology";
+import { SharedEntriesEditor } from "./SharedEntriesEditor";
+import { parseLines, sameName } from "../lib/text";
 
 /** 短編集の種類の選択 */
 export function ModeSelect(props: { mode: AnthologyMode; onChange: (m: AnthologyMode) => void }) {
@@ -47,6 +57,11 @@ const TABS = [
   ["export", "EPUB出力"],
 ] as const;
 type TabId = (typeof TABS)[number][0];
+
+const REBUILD_CONCEPT_QUESTION =
+  "あらすじも作り直しますか?\n\n" +
+  "[OK] あらすじから作り直す(前の話の内容を踏まえて、あらすじを自動で作り直します)\n" +
+  "[キャンセル] あらすじは今のまま、設定資料・構成・本文だけを作り直す";
 
 function episodeStatus(e: Story): string {
   if (isUndecided(e)) return "未決定";
@@ -85,12 +100,17 @@ export function AnthologyDetail(props: {
   const index = Math.min(selected, a.episodes.length - 1);
   const ep = a.episodes[index];
   const decided = a.episodes.filter((e) => !isUndecided(e));
-  const pending = a.episodes.map((e, i) => ({ e, i })).filter(({ e }) => !isUndecided(e) && e.status !== "done");
+  // おまかせ:概要が未決定の話も、直前までの話を踏まえてあらすじを自動で作ってから生成する
+  const auto = a.autoConcept ?? true;
+  const pending = a.episodes.map((e, i) => ({ e, i })).filter(({ e }) => e.status !== "done" && (auto || !isUndecided(e)));
   const totalChars = a.episodes.reduce((n, e) => n + storyChars(e), 0);
 
-  const gachaFor = (e: Story) => gachas[e.id] ?? initialGacha(a.keywords, a.note);
+  // ガチャの初期値は、話に保存してある「仕込み」(タイトル・キーワード・補足・セリフ)から作る
+  const initialFor = (e: Story | undefined) =>
+    initialGacha(e?.keywords ?? a.keywords, e?.note ?? a.note, undefined, { title: e?.plannedTitle, lines: e?.lines });
+  const gachaFor = (e: Story) => gachas[e.id] ?? initialFor(e);
   const updateGacha = (id: string) => (fn: (s: GachaState) => GachaState) =>
-    setGachas((g) => ({ ...g, [id]: fn(g[id] ?? initialGacha(a.keywords, a.note)) }));
+    setGachas((g) => ({ ...g, [id]: fn(g[id] ?? initialFor(a.episodes.find((e) => e.id === id))) }));
 
   const mutateEpisode =
     (i: number): Mutate =>
@@ -114,14 +134,45 @@ export function AnthologyDetail(props: {
     const e = a.episodes[i];
     const hasWork = e.bible.generated || e.chapters.length > 0;
     if (hasWork && !window.confirm(`第${i + 1}話の設定資料と本文を破棄して、ガチャからやり直します。よろしいですか?`)) return;
-    setGachas((g) => ({ ...g, [e.id]: initialGacha(e.keywords, e.note ?? "", conceptOf(e)) }));
+    setGachas((g) => ({
+      ...g,
+      [e.id]: initialGacha(e.keywords, e.note ?? "", conceptOf(e), { title: e.plannedTitle, lines: e.lines }),
+    }));
     mutate((d) => {
-      const x = d.episodes[i];
-      Object.assign(x, { title: "", tagline: "", genre: "", synopsis: "", characters: [], status: "concept" });
-      x.bible = emptyBible();
-      x.chapters = [];
+      resetEpisode(d.episodes[i], true);
+      clearHistory(d, [e.id]);
     });
   };
+
+  /**
+   * i 番目の話から後ろを、最新の共通設定と経緯で作り直す。
+   * 前の話の「要確認」を直した後に、その内容を後の話へ反映させるために使う。
+   */
+  const rebuildFrom = (i: number) => {
+    const count = a.episodes.length - i;
+    if (!window.confirm(`第${i + 1}話から最後まで(${count}話)の設定資料・構成・本文を破棄して、順に作り直します。よろしいですか?`)) return;
+    const concept = window.confirm(REBUILD_CONCEPT_QUESTION);
+    const ids = a.episodes.slice(i).map((e) => e.id);
+    setGachas((g) => Object.fromEntries(Object.entries(g).filter(([id]) => !ids.includes(id))));
+    mutate((d) => {
+      d.episodes.slice(i).forEach((e) => resetEpisode(e, concept));
+      clearHistory(d, ids);
+    });
+    props.execute(
+      a.episodes
+        .map((e, k) => ({ e, k }))
+        .filter(({ e, k }) => k >= i && (concept || auto || !isUndecided(e)))
+        .map(({ k }) => ({ episode: k, task: { kind: "all" as const }, auto: concept || auto })),
+    );
+  };
+
+  /** 設定資料の場所・品物・用語を共通の設定にする */
+  const promoteEntry = (kind: EntryKind, e: Entry) =>
+    mutate((d) => {
+      d.shared ??= {};
+      const list = (d.shared[kind] ??= []);
+      if (!list.some((x) => sameName(x.name, e.name))) list.push(toSharedEntry(e));
+    });
 
   /** 設定資料の人物を共通の登場人物にし、この話の出演者にする */
   const promote = (i: number, c: CharacterSheet) =>
@@ -138,11 +189,8 @@ export function AnthologyDetail(props: {
 
   const setCastIds = (i: number, ids: string[]) => mutate((d) => void (d.episodes[i].castIds = ids));
 
-  const decide = (i: number, c: Concept, keywords: string[], note: string) =>
-    mutate((d) => {
-      const x = d.episodes[i];
-      Object.assign(x, { ...c, keywords, note, status: "concept" });
-    });
+  const decide = (i: number, c: Concept, keywords: string[], note: string, lines: string[]) =>
+    mutate((d) => applyConcept(d.episodes[i], c, keywords, note, lines));
 
   return (
     <div className="page">
@@ -185,17 +233,43 @@ export function AnthologyDetail(props: {
                 <button
                   className="primary"
                   disabled={run.running || pending.length === 0}
-                  onClick={() => props.execute(pending.map(({ i }) => ({ episode: i, task: { kind: "all" } })))}
+                  onClick={() => props.execute(pending.map(({ i }) => ({ episode: i, task: { kind: "all" }, auto })))}
                 >
-                  ▶ 概要が決まった話をすべて生成({pending.length}話)
+                  ▶ 未完成の話をすべて生成({pending.length}話)
                 </button>
               )
             }
           >
             <p className="muted small-text">
-              概要が決まっていて未完成の話を、第1話から順に「設定資料 → 構成 → 執筆 → 校閲」まで生成します。各話はその話の設定資料だけを参照します。
-              話ごとの生成は、各話の「制作」タブからも行えます。
+              未完成の話を、第1話から順に「設定資料 → 構成 → 執筆 → 校閲」まで生成します。各話はその話の設定資料と共通の設定だけを参照します。
+              {isSeries(a) && "連作短編では、1話を書き終えるたびに共通の設定の経緯を更新し、次の話に引き継ぎます。"}
             </p>
+            <label className="check">
+              <input
+                type="checkbox"
+                checked={auto}
+                disabled={runningHere}
+                onChange={(e) => mutate((d) => void (d.autoConcept = e.target.checked))}
+              />
+              <span>
+                <strong>おまかせ</strong>:概要が未決定の話は、あらすじも自動で作る
+                <span className="muted small-text">
+                  (直前の話が書き上がってから作るので、前の話の内容があらすじに反映されます。各話のタイトル・キーワード・セリフ・出演者だけ先に入れておけます)
+                </span>
+              </span>
+            </label>
+            <label className="check">
+              <input
+                type="checkbox"
+                checked={a.stopOnIssues ?? false}
+                disabled={runningHere}
+                onChange={(e) => mutate((d) => void (d.stopOnIssues = e.target.checked))}
+              />
+              <span>
+                「要確認」の指摘が残った話があれば、次の話へ進まずに止まる
+                <span className="muted small-text">(オフの場合は最後まで生成します。後から直す場合は、各話の「この話以降を作り直す」が使えます)</span>
+              </span>
+            </label>
             {mine && run.error && <p className="error">エラー:{run.error}</p>}
             {mine && run.logs.length > 0 && (
               <details open={runningHere}>
@@ -244,7 +318,10 @@ export function AnthologyDetail(props: {
                 start={(t) => props.start(t, index)}
                 stop={props.stop}
                 structureLocked={runningHere}
-                onDecide={(c, kws, note) => decide(index, c, kws, note)}
+                onDecide={(c, kws, note, lines) => decide(index, c, kws, note, lines)}
+                onRebuildFrom={() => rebuildFrom(index)}
+                onUpdateHistory={() => props.execute([{ episode: index, task: { kind: "all" }, historyOnly: true }])}
+                onPromoteEntry={promoteEntry}
                 onRedo={() => redoEpisode(index)}
                 onRemove={() => removeEpisode(index)}
                 onPromote={(c) => promote(index, c)}
@@ -285,7 +362,10 @@ function EpisodePanel(props: {
   stop: () => void;
   /** 生成中は話の追加・削除・やり直しを禁止する(生成中の話の位置がずれるため) */
   structureLocked: boolean;
-  onDecide: (c: Concept, keywords: string[], note: string) => void;
+  onDecide: (c: Concept, keywords: string[], note: string, lines: string[]) => void;
+  onRebuildFrom: () => void;
+  onUpdateHistory: () => void;
+  onPromoteEntry: (kind: EntryKind, e: Entry) => void;
   onRedo: () => void;
   onRemove: () => void;
   onPromote: (c: CharacterSheet) => void;
@@ -309,8 +389,20 @@ function EpisodePanel(props: {
   const target = ep.plan.scenes * ep.plan.charsPerScene;
   const otherTitles = a.episodes.filter((e) => e.id !== ep.id && e.title).map((e) => e.title);
   const runningThis = run.running && run.storyId === ep.id;
+  const undecided = isUndecided(ep);
 
-  if (isUndecided(ep)) {
+  // 概要が未決定のあいだは、ガチャ欄の入力(タイトル・キーワード・補足・セリフ)を「仕込み」として話に保存する。
+  // おまかせ生成は、この仕込みを使ってあらすじを自動で作る。
+  const prep = JSON.stringify([props.gacha.keywords, props.gacha.note, props.gacha.title.trim(), parseLines(props.gacha.lines)]);
+  const saved = JSON.stringify([ep.keywords, ep.note ?? "", ep.plannedTitle ?? "", ep.lines ?? []]);
+  useEffect(() => {
+    if (!undecided || prep === saved) return;
+    const [keywords, note, title, lines] = JSON.parse(prep) as [string[], string, string, string[]];
+    props.mutate((s) => Object.assign(s, { keywords, note, plannedTitle: title, lines }));
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [prep, saved, undecided]);
+
+  if (undecided) {
     return (
       <div className="stack grow">
         <div className="row between">
@@ -321,6 +413,7 @@ function EpisodePanel(props: {
         </div>
         <p className="muted small-text">
           約{target.toLocaleString()}字の1話完結の短編として案を考えます。他の話とタイトル・内容が被らないようにします。
+          ここに入力したタイトル・キーワード・補足・セリフ・出演者は保存され、ガチャを引かなくても「おまかせ」での生成時に使われます。
         </p>
         <ConceptGacha
           settings={props.settings}
@@ -331,7 +424,7 @@ function EpisodePanel(props: {
           shared={sharedContextFor(a, index)}
           extra={picker}
           confirmLabel={`この案で第${n}話を決定 →`}
-          onConfirm={(p) => props.onDecide(p.concept, cleanKeywords(p.keywords), p.note)}
+          onConfirm={(p) => props.onDecide(p.concept, cleanKeywords(p.keywords), p.note, p.lines)}
         />
       </div>
     );
@@ -352,6 +445,24 @@ function EpisodePanel(props: {
             onClick={props.onRedo}
           >
             ガチャからやり直す
+          </button>
+          {isSeries(a) && (
+            <button
+              className="small"
+              disabled={run.running || !ep.chapters.some((c) => c.body)}
+              title="この話の本文を読み直して、共通の設定の「これまでの経緯」を更新します。本文を直した後に使います。"
+              onClick={props.onUpdateHistory}
+            >
+              経緯を本文から更新
+            </button>
+          )}
+          <button
+            className="small"
+            disabled={run.running}
+            title="この話から最後までを、最新の共通設定と経緯で作り直します"
+            onClick={props.onRebuildFrom}
+          >
+            この話以降を作り直す
           </button>
           <button className="small danger" disabled={props.structureLocked} onClick={props.onRemove}>
             この話を削除
@@ -397,6 +508,8 @@ function EpisodePanel(props: {
           running={run.running}
           onPromote={props.onPromote}
           isShared={(name) => castOf(a, ep).some((c) => sameName(c.name, name))}
+          onPromoteEntry={props.onPromoteEntry}
+          isSharedEntry={(kind, name) => sharedEntries(a).some((x) => x.kind === kind && sameName(x.entry.name, name))}
         />
       )}
     </div>
@@ -461,6 +574,15 @@ function InfoTab({ anthology: a, mutate, settings }: { anthology: Anthology; mut
           settings={settings}
           context={{ title: a.title, keywords: a.keywords, note: a.note, world: a.world ?? "" }}
           onWorld={(w) => mutate((d) => void (d.world = w))}
+          episodeLabel={label}
+        />
+      </Section>
+      <Section title="共通の場所・品物・用語">
+        <SharedEntriesEditor
+          shared={a.shared ?? {}}
+          onChange={(fn) => mutate((d) => void (d.shared = fn(d.shared ?? {})))}
+          settings={settings}
+          context={{ title: a.title, keywords: a.keywords, note: a.note, world: a.world ?? "", cast: (a.cast ?? []).map((c) => c.name) }}
           episodeLabel={label}
         />
       </Section>

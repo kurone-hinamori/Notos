@@ -136,12 +136,14 @@ export function BodyTab(props: { story: Story; mutate: Mutate; start: (t: Task) 
                     <span className="badge">{label}</span>
                     <div className="grow">
                       <div>{it.problem}</div>
-                      <div className="quote">「{it.quote}」</div>
+                      {it.quote && <div className="quote">「{it.quote}」</div>}
                       {it.replacement && <div className="muted small-text">{it.applied ? "→ " : "修正案:"}{it.replacement}</div>}
                       <div className="row wrap issue-actions">
-                        <button className="small" onClick={() => locate(it.applied ? it.replacement : it.quote)}>
-                          本文で表示
-                        </button>
+                        {it.quote && (
+                          <button className="small" onClick={() => locate(it.applied ? it.replacement : it.quote)}>
+                            本文で表示
+                          </button>
+                        )}
                         {it.applied && (
                           <button
                             className="small"

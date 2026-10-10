@@ -1,4 +1,47 @@
-import type { ReactNode } from "react";
+import { useState, type ReactNode } from "react";
+import type { Story } from "../types";
+import { hasLine, parseLines } from "../lib/text";
+
+/**
+ * 「使ってほしいセリフ」の入力欄(1行に1つ)。
+ * story を渡すと、各セリフが本文で使われているかも表示する。
+ */
+export function LinesField(props: { lines: string[]; onChange: (lines: string[]) => void; story?: Story; label?: string }) {
+  // 入力途中の空行を保つため、入力欄の文字列はここで持つ
+  const [text, setText] = useState(() => props.lines.join("\n"));
+  const lines = parseLines(text);
+  const chapters = props.story?.chapters ?? [];
+  const written = chapters.some((c) => c.body.trim());
+  return (
+    <label className="field">
+      <span>{props.label ?? "使ってほしいセリフ(1行に1つ。本文で必ずそのまま使います)"}</span>
+      <textarea
+        rows={3}
+        value={text}
+        placeholder={"例:「それでも、私は行くよ」\n例:レン「約束は、破るためにあるんじゃない」"}
+        onChange={(e) => {
+          setText(e.target.value);
+          props.onChange(parseLines(e.target.value));
+        }}
+      />
+      {written && lines.length > 0 && (
+        <ul className="line-status">
+          {lines.map((l) => {
+            const at = chapters.findIndex((c) => hasLine(c.body, l));
+            return (
+              <li key={l} className={at >= 0 ? "ok" : ""}>
+                {at >= 0 ? `✔ ${chapters.length > 1 ? `第${at + 1}章で使用` : "使用済み"}` : "― 未使用"}:{l}
+              </li>
+            );
+          })}
+        </ul>
+      )}
+      <small className="muted">
+        話者を決めたい場合は「レン「…」」のように書きます。どの場面で使うかは構成の作成時に決まり、書いた後に本文へ入っているかを確認します。
+      </small>
+    </label>
+  );
+}
 
 export function Field(props: {
   label: string;

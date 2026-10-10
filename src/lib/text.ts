@@ -90,9 +90,36 @@ export function bibleToText(b: Bible): string {
 /** 名前が一致する要素を探す(空白・敬称ゆれを無視)。 */
 export function sameName(a: string, b: string): boolean {
   const norm = (s: string) => s.replace(/[\s　・･]/g, "");
-  return norm(a) === norm(b);
+  if (norm(a) === norm(b)) return true;
+  // 片方にだけ末尾の補足の括弧が付いている場合(例:「銀の懐中時計(先代からのもの)」)は同じものとみなす。
+  // 両方に括弧がある場合(「田中(父)」「田中(母)」)は別物の可能性があるので区別する。
+  const paren = /[（(][^（()）]*[）)]\s*$/;
+  if (paren.test(a) === paren.test(b)) return false;
+  return norm(a.replace(paren, "")) === norm(b.replace(paren, ""));
 }
 
 export function newId(): string {
   return crypto.randomUUID().replace(/-/g, "").slice(0, 20);
+}
+
+/** 「使ってほしいセリフ」の入力(1行に1つ)を配列にする。 */
+export function parseLines(text: string): string[] {
+  return [...new Set(text.split("\n").map((l) => l.trim()).filter(Boolean))];
+}
+
+/**
+ * 指定されたセリフの、本文に現れるべき中身を取り出す。
+ * 「アリア「任せて」」のように話者付きで書かれた場合は、かぎ括弧の中だけを使う。
+ */
+export function lineCore(line: string): string {
+  const m = line.match(/[「『]([^」』]+)[」』]/);
+  return (m ? m[1] : line).trim();
+}
+
+const squash = (s: string) => s.replace(/[\s　]/g, "");
+
+/** 本文に指定のセリフが(空白の違いを除いて)そのまま入っているか */
+export function hasLine(body: string, line: string): boolean {
+  const core = squash(lineCore(line));
+  return core.length > 0 && squash(body).includes(core);
 }

@@ -1,9 +1,9 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import type { Anthology, Doc, Settings, Story } from "./types";
 import { isAnthology } from "./types";
-import { loadStory, saveStory } from "./lib/storage";
-import { runTask, summarizeCastChanges, type Ctx, type Task } from "./lib/pipeline";
-import { castOf, isSeries, recordHistory, sharedContextFor } from "./lib/anthology";
+import { isUndecided, loadStory, saveStory } from "./lib/storage";
+import { pullConcept, runTask, summarizeCastChanges, type Ctx, type Task } from "./lib/pipeline";
+import { applyConcept, conceptRequestFor, hasOpenIssues, historyTargets, isSeries, recordHistory, sharedContextFor } from "./lib/anthology";
 
 export interface RunState {
   /** 実行中のドキュメント(長編または短編集)の id */
@@ -21,6 +21,10 @@ export interface RunState {
 export interface Job {
   task: Task;
   episode?: number;
+  /** 短編集の話で、概要が未決定ならあらすじを自動で作ってから生成する(おまかせ生成) */
+  auto?: boolean;
+  /** 短編集の話で、生成はせずに経緯の更新だけを行う */
+  historyOnly?: boolean;
 }
 
 const clock = (d: Date) => d.toLocaleTimeString("ja-JP", { hour12: false });
@@ -134,28 +138,44 @@ export function useStoryManager(settings: Settings) {
       const taskStart = Date.now();
       pushLog("開始");
 
-      /** 連作短編で1話を書き終えたら、共通の登場人物に起きた変化を経緯として記録する */
+      /** 連作短編で1話を書き終えたら、共通の設定(人物・場所・品物・用語)に起きた変化を経緯として記録する */
       const afterEpisode = async (ctx: Ctx, job: Job) => {
         const a = ref.current;
         if (!isAnthology(a) || !isSeries(a) || job.episode === undefined) return;
-        if (job.task.kind !== "all" && job.task.kind !== "chapter") return;
+        if (!job.historyOnly && job.task.kind !== "all" && job.task.kind !== "chapter") return;
         const e = a.episodes[job.episode];
-        const cast = castOf(a, e);
+        const names = historyTargets(a, e);
         const written = e.chapters.length > 0 && e.chapters.every((c) => c.beats.length > 0 && c.sceneDone >= c.beats.length);
-        if (!cast.length || !written) return;
-        ctx.stage("共通の登場人物の経緯を更新中");
-        const changes = await summarizeCastChanges(ctx, cast.map((c) => c.name));
+        if (!names.length || !written) return;
+        ctx.stage("共通の設定の経緯を更新中");
+        const changes = await summarizeCastChanges(ctx, names);
         mutate((d) => recordHistory(d as Anthology, e.id, changes));
-        ctx.log(`共通の登場人物の経緯を更新しました(${changes.length}名)`);
+        ctx.log(`共通の設定の経緯を更新しました(${changes.length}件)`);
+      };
+
+      /** おまかせ生成:概要が未決定の話のあらすじを、直前までの話を踏まえて自動で作る */
+      const autoConcept = async (ctx: Ctx, index: number) => {
+        const a = ref.current as Anthology;
+        const e = a.episodes[index];
+        ctx.stage("あらすじを作成中");
+        const prep = { keywords: e.keywords, note: e.note ?? "", title: e.plannedTitle ?? "", lines: e.lines ?? [] };
+        for (let attempt = 0; ; attempt++) {
+          const c = await pullConcept(ctx.settings, conceptRequestFor(a, index, prep), ctx.signal);
+          if (c.title && c.synopsis) {
+            ctx.update((s) => applyConcept(s, c, prep.keywords, prep.note, prep.lines));
+            ctx.log(`あらすじを作成しました:「${c.title}」`);
+            return;
+          }
+          if (attempt >= 2) throw new Error("あらすじを作成できませんでした");
+        }
       };
 
       try {
-        for (const job of jobs) {
+        for (const [n, job] of jobs.entries()) {
           const target = select(job.episode);
           const prefix = job.episode === undefined ? "" : `第${job.episode + 1}話 `;
           const storyId = target.get().id;
           setRun((r) => ({ ...r, storyId }));
-          if (job.episode !== undefined) pushLog(`── ${prefix}「${target.get().title}」`);
           const ctx: Ctx = {
             settings: settingsRef.current,
             signal: controller.signal,
@@ -171,12 +191,21 @@ export function useStoryManager(settings: Settings) {
             log: (msg) => pushLog(prefix + msg),
           };
           if (job.episode !== undefined && isAnthology(ref.current)) {
-            // 短編集の共通の登場人物・世界観・使用済みの名前を、生成の直前の状態で話に渡す
+            if (job.auto && isUndecided(target.get())) await autoConcept(ctx, job.episode);
+            pushLog(`── ${prefix}「${target.get().title}」`);
+            // 短編集の共通の設定・世界観・使用済みの名前を、生成の直前の状態で話に渡す
             const shared = sharedContextFor(ref.current, job.episode);
             target.update((s) => void (s.shared = shared));
           }
-          await runTask(ctx, job.task);
+          if (!job.historyOnly) await runTask(ctx, job.task);
           if (job.episode !== undefined) await afterEpisode(ctx, job);
+
+          const a = ref.current;
+          if (job.episode !== undefined && isAnthology(a) && a.stopOnIssues && n < jobs.length - 1 && hasOpenIssues(a.episodes[job.episode])) {
+            endStage();
+            pushLog(`${prefix}に「要確認」の指摘が残っているため、次の話へ進まずに停止しました。確認後に、もう一度生成を始めてください。`);
+            break;
+          }
         }
         endStage();
         pushLog(`終了  [合計 ${duration(Date.now() - taskStart)}]`);

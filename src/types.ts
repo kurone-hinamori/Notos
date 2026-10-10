@@ -71,6 +71,8 @@ export interface Chapter {
   digest: string;
   proofread: boolean;
   issues: Issue[];
+  /** この章で使うセリフと、使う場面(0始まり) */
+  lines?: { text: string; scene: number }[];
 }
 
 export type StoryStatus = "concept" | "producing" | "done";
@@ -101,6 +103,10 @@ export interface Story {
   chapters: Chapter[];
   plan: BookPlan;
   author: string;
+  /** 使ってほしいセリフ(1件ずつ。本文のどこかで必ず使う) */
+  lines?: string[];
+  /** 短編集の話で、概要が未決定のうちに決めておくタイトル(おまかせ生成で使う) */
+  plannedTitle?: string;
   /** 短編集の話で、出演させる共通の登場人物の id */
   castIds?: string[];
   /** 短編集の話を生成するとき、短編集側から渡される共有情報(生成の直前に設定される) */
@@ -114,10 +120,21 @@ export interface SharedCharacter extends CharacterSheet {
   history: { episodeId: string; text: string }[];
 }
 
+export type EntryKind = "places" | "items" | "terms";
+
+/** 短編集の共通の設定(場所・品物・用語)。全話で同じものとして扱う。 */
+export interface SharedEntry extends Entry {
+  id: string;
+  /** 話ごとの経緯(連作短編で、後の話に引き継ぐ) */
+  history: { episodeId: string; text: string }[];
+}
+
 /** 短編集から各話へ渡す情報 */
 export interface SharedContext {
   /** 出演する共通の登場人物(経緯はその話より前のものだけ) */
   characters: (CharacterSheet & { history: string })[];
+  /** 共通の場所・品物・用語(経緯はその話より前のものだけ)。以前のデータには無いことがある */
+  entries?: { kind: EntryKind; name: string; description: string; history: string }[];
   /** 共通の世界観 */
   world: string;
   /** 他の話で使われている名前(同名の別人を避ける) */
@@ -149,6 +166,12 @@ export interface Anthology {
   world?: string;
   /** 共通の登場人物 */
   cast?: SharedCharacter[];
+  /** 共通の場所・品物・用語 */
+  shared?: Partial<Record<EntryKind, SharedEntry[]>>;
+  /** まとめて生成で、概要が未決定の話のあらすじを自動で作る(おまかせ)。未設定は true */
+  autoConcept?: boolean;
+  /** まとめて生成で、「要確認」が残った話があれば次の話へ進まずに止まる。未設定は false */
+  stopOnIssues?: boolean;
 }
 
 export type Doc = Story | Anthology;

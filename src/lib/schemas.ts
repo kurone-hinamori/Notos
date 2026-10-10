@@ -45,6 +45,8 @@ export const bibleSchema = obj({
 
 export const outlineSchema = obj({
   chapters: arr(obj({ title: str, plan: str, beats: arr(str) })),
+  // 使ってほしいセリフを、どの章のどの場面で使うか(番号は1始まり)
+  lineScenes: arr(obj({ line: str, chapter: { type: "integer" }, scene: { type: "integer" } })),
 });
 
 export const digestSchema = obj({ digest: str });
@@ -70,4 +72,9 @@ export const castSchema = obj({
 /** 1話の中で共通の登場人物に起きた変化 */
 export const castChangesSchema = obj({
   changes: arr(obj({ name: str, change: str })),
+});
+
+/** 短編集の共通の設定(場所・品物・用語)の案 */
+export const entriesSchema = obj({
+  entries: arr(entry),
 });
