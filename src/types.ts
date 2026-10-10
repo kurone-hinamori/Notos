@@ -54,6 +54,8 @@ export interface Issue {
   problem: string;
   replacement: string;
   applied: boolean;
+  /** 利用者による扱い。done: 対応済み、ignored: 無視(誤検出など) */
+  state?: "done" | "ignored";
 }
 
 export interface Chapter {
