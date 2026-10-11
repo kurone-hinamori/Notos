@@ -9,7 +9,7 @@
     }
   },
   "productName": "Notos",
-  "version": "0.5.1",
+  "version": "0.5.2",
   "app": {
     "security": {
       "csp": null

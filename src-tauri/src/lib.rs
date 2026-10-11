@@ -143,8 +143,11 @@ pub fn run() {
         .plugin(tauri_plugin_http::init())
         .plugin(tauri_plugin_process::init());
 
+    // ウィンドウの位置とサイズは、終了時に保存して次回の起動時に復元する
     #[cfg(desktop)]
-    let builder = builder.plugin(tauri_plugin_updater::Builder::new().build());
+    let builder = builder
+        .plugin(tauri_plugin_updater::Builder::new().build())
+        .plugin(tauri_plugin_window_state::Builder::default().build());
 
     builder
         .invoke_handler(tauri::generate_handler![
