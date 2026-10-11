@@ -109,16 +109,19 @@ export function parseLines(text: string): string[] {
 
 /**
  * 指定されたセリフの、本文に現れるべき中身を取り出す。
- * 「アリア「任せて」」のように話者付きで書かれた場合は、かぎ括弧の中だけを使う。
+ * アリア「任せて」のように話者付きで書かれた場合は、かぎ括弧の中だけを使う。
+ * 「アリア「任せて」」のように全体をさらに囲んである場合も、いちばん内側のセリフを取り出す。
  */
 export function lineCore(line: string): string {
-  const m = line.match(/[「『]([^」』]+)[」』]/);
-  return (m ? m[1] : line).trim();
+  // かぎ括弧を含まない(=いちばん内側の)かぎ括弧の中身
+  const m = line.match(/[「『]([^「『」』]+)[」』]/);
+  return (m ? m[1] : line.replace(/[「『」』]/g, "")).trim();
 }
 
-const squash = (s: string) => s.replace(/[\s　]/g, "");
+/** 空白と、句読点・記号の違いを無視して比べるための正規化 */
+const squash = (s: string) => s.replace(/[\s　、。,.，．!?！？…‥・･―—─\-~〜～「」『』（）()]/g, "");
 
-/** 本文に指定のセリフが(空白の違いを除いて)そのまま入っているか */
+/** 本文に指定のセリフが(空白と句読点・記号の違いを除いて)そのまま入っているか */
 export function hasLine(body: string, line: string): boolean {
   const core = squash(lineCore(line));
   return core.length > 0 && squash(body).includes(core);

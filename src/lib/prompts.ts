@@ -42,7 +42,11 @@ export interface ConceptRequest {
 const KIND_LABEL = { places: "場所", items: "品物", terms: "用語" } as const;
 
 /** 使ってほしいセリフをプロンプト用の箇条書きにする */
-const linesText = (lines: string[]) => lines.map((l) => `- ${l}`).join("\n");
+const linesText = (lines: string[]) =>
+  lines
+    // 「話者「セリフ」」のように全体が囲んである場合は、外側の括弧を外して 話者「セリフ」 の形で渡す
+    .map((l) => `- ${l.replace(/^[「『](.*[「『].*[」』])[」』]$/, "$1")}`)
+    .join("\n");
 
 /** 共通の登場人物をプロンプト用のテキストにする */
 export function sharedCharactersText(chars: SharedContext["characters"]): string {
