@@ -10,6 +10,7 @@ import {
   outlinePrompt,
   proofreadChunkPrompt,
   scenePrompt,
+  acquiringEntries,
   castPrompt,
   castChangesPrompt,
   entriesPrompt,
@@ -107,7 +108,17 @@ function mergeShared(chars: CharacterSheet[], shared: (CharacterSheet & { histor
 function mergeSharedEntries(kind: EntryKind, list: Omit<Entry, "notes">[] | undefined, shared: SharedContext | undefined): Entry[] {
   const fixed = (shared?.entries ?? [])
     .filter((e) => e.kind === kind)
-    .map((e) => ({ name: e.name, description: e.description, notes: e.history ? `これまでの経緯:${e.history}` : "" }));
+    .map((e) => ({
+      name: e.name,
+      description: e.description,
+      notes: [
+        e.status === "acquire" && "この話の途中で手に入れる(話の始まりでは、まだ誰も持っていない)",
+        e.condition && `条件:${e.condition}`,
+        e.history && `これまでの経緯:${e.history}`,
+      ]
+        .filter(Boolean)
+        .join(" / "),
+    }));
   const own = (list ?? []).filter((e) => !fixed.some((f) => sameName(f.name, e.name))).map((e) => ({ ...e, notes: "" }));
   return [...fixed, ...own];
 }
@@ -168,6 +179,7 @@ async function stepOutline(ctx: Ctx) {
   const raw = await chatJson<{
     chapters: { title: string; plan: string; beats: string[] }[];
     lineScenes?: { line: string; chapter: number; scene: number }[];
+    acquireScenes?: { name: string; chapter: number; scene: number }[];
   }>(ctx.settings, {
     messages: outlinePrompt(ctx.get(), plan),
     schema: outlineSchema,
@@ -187,6 +199,7 @@ async function stepOutline(ctx: Ctx) {
       proofread: false,
       issues: [],
       lines: [],
+      acquire: [],
     }));
     // モデルが決めたセリフの場面を取り込む(指定したセリフと一致し、存在する場面を指すものだけ)
     for (const a of raw.lineScenes ?? []) {
@@ -198,7 +211,24 @@ async function stepOutline(ctx: Ctx) {
       ch.lines!.push({ text: line, scene });
     }
     assignLines(s);
+
+    // この話の途中で手に入れる共通の品物について、手に入れる場面を決める
+    const last = s.chapters.length - 1;
+    for (const item of acquiringEntries(s.shared)) {
+      const a = (raw.acquireScenes ?? []).find((x) => sameName(x.name ?? "", item.name));
+      let ci = (a?.chapter ?? 0) - 1;
+      let si = (a?.scene ?? 0) - 1;
+      // 「最後に手に入れる」と指定された場合や、モデルが場面を決めなかった場合は、最後の場面にする
+      if (item.acquireAt === "last" || !s.chapters[ci] || si < 0 || si >= s.chapters[ci].beats.length) {
+        ci = last;
+        si = s.chapters[last].beats.length - 1;
+      }
+      s.chapters[ci].acquire!.push({ name: item.name, scene: si });
+    }
   });
+  for (const c of ctx.get().chapters) {
+    for (const x of c.acquire ?? []) ctx.log(`「${x.name}」は場面${x.scene + 1}で手に入れます`);
+  }
   ctx.log(`全${chapters.length}章の構成を作成しました`);
 }
 

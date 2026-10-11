@@ -20,6 +20,8 @@ export function SharedEntriesEditor(props: {
   context: { title: string; keywords: string[]; note: string; world: string; cast: string[] };
   /** 経緯の話の名前(例:第2話「…」) */
   episodeLabel?: (episodeId: string) => string;
+  /** 話の一覧。渡すと「登場する話」を選べる(新規作成の画面ではまだ話がないので渡さない) */
+  episodes?: { id: string; label: string }[];
 }) {
   return (
     <div className="stack">
@@ -41,8 +43,10 @@ function KindEditor(props: {
   settings: Settings;
   context: { title: string; keywords: string[]; note: string; world: string; cast: string[] };
   episodeLabel?: (episodeId: string) => string;
+  episodes?: { id: string; label: string }[];
 }) {
   const { kind } = props;
+  const episodes = props.episodes ?? [];
   const list = props.shared[kind] ?? [];
   const [count, setCount] = useState(2);
   const [candidates, setCandidates] = useState<Entry[]>([]);
@@ -90,6 +94,61 @@ function KindEditor(props: {
             </button>
           </div>
           <textarea rows={2} value={e.description} placeholder="外見・特徴・由来・できること/できないこと" onChange={(ev) => patch(i, { description: ev.target.value })} />
+          <div className="row wrap">
+            {episodes.length > 0 && (
+              <label className="row">
+                <span className="muted small-text">登場する話</span>
+                <select
+                  style={{ width: "auto" }}
+                  value={episodes.some((x) => x.id === e.fromEpisodeId) ? e.fromEpisodeId : ""}
+                  onChange={(ev) => patch(i, { fromEpisodeId: ev.target.value || undefined })}
+                >
+                  <option value="">最初の話から</option>
+                  {episodes.slice(1).map((x) => (
+                    <option key={x.id} value={x.id}>
+                      {x.label}から
+                    </option>
+                  ))}
+                </select>
+              </label>
+            )}
+            {kind === "items" && (
+              <label className="row">
+                <span className="muted small-text">その話での状態</span>
+                <select
+                  style={{ width: "auto" }}
+                  value={e.acquire ?? "start"}
+                  onChange={(ev) => patch(i, { acquire: ev.target.value as "start" | "during" })}
+                >
+                  <option value="start">最初から持っている</option>
+                  <option value="during">その話の途中で手に入れる</option>
+                </select>
+              </label>
+            )}
+            {kind === "items" && e.acquire === "during" && (
+              <label className="row">
+                <span className="muted small-text">手に入れる場面</span>
+                <select
+                  style={{ width: "auto" }}
+                  value={e.acquireAt ?? "auto"}
+                  onChange={(ev) => patch(i, { acquireAt: ev.target.value as "auto" | "last" })}
+                >
+                  <option value="auto">おまかせ(構成の作成時に決める)</option>
+                  <option value="last">最後の場面</option>
+                </select>
+              </label>
+            )}
+          </div>
+          {kind === "items" && e.acquire === "during" && (
+            <small className="muted">
+              登場する話より前の話には渡しません。登場する話では「まだ持っていない」状態から始まり、手に入れる場面より前では使わないよう場面ごとに指示します。次の話からは持っているものとして扱います。
+            </small>
+          )}
+          <input
+            value={e.condition ?? ""}
+            placeholder={kind === "items" ? "登場・入手の条件(任意) 例:試練の洞窟の最奥にあり、3つの試練を越えないと抜けない" : "登場の条件(任意)"}
+            onChange={(ev) => patch(i, { condition: ev.target.value })}
+          />
           {e.history.length > 0 && (
             <div className="field">
               <span>これまでの経緯(連作短編で後の話に引き継がれます)</span>

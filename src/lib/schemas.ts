@@ -47,6 +47,8 @@ export const outlineSchema = obj({
   chapters: arr(obj({ title: str, plan: str, beats: arr(str) })),
   // 使ってほしいセリフを、どの章のどの場面で使うか(番号は1始まり)
   lineScenes: arr(obj({ line: str, chapter: { type: "integer" }, scene: { type: "integer" } })),
+  // この話の途中で手に入れる共通の品物を、どの章のどの場面で手に入れるか(番号は1始まり)
+  acquireScenes: arr(obj({ name: str, chapter: { type: "integer" }, scene: { type: "integer" } })),
 });
 
 export const digestSchema = obj({ digest: str });

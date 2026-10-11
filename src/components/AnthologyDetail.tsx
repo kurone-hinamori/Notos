@@ -18,6 +18,7 @@ import {
   applyConcept,
   castOf,
   clearHistory,
+  firstEpisodeOf,
   isSeries,
   resetEpisode,
   sharedContextFor,
@@ -166,12 +167,22 @@ export function AnthologyDetail(props: {
     );
   };
 
-  /** 設定資料の場所・品物・用語を共通の設定にする */
-  const promoteEntry = (kind: EntryKind, e: Entry) =>
+  /**
+   * 設定資料の場所・品物・用語を共通の設定にする。
+   * 登録した話を「登場する話」にするので、それより前の話を作り直しても出てこない。
+   * 品物は、その話の途中で手に入れたものとして登録する(「短編集の情報」タブで変更できる)。
+   */
+  const promoteEntry = (i: number, kind: EntryKind, e: Entry) =>
     mutate((d) => {
       d.shared ??= {};
       const list = (d.shared[kind] ??= []);
-      if (!list.some((x) => sameName(x.name, e.name))) list.push(toSharedEntry(e));
+      if (list.some((x) => sameName(x.name, e.name))) return;
+      list.push(
+        toSharedEntry(e, {
+          fromEpisodeId: i > 0 ? d.episodes[i].id : undefined,
+          acquire: kind === "items" && i > 0 ? "during" : undefined,
+        }),
+      );
     });
 
   /** 設定資料の人物を共通の登場人物にし、この話の出演者にする */
@@ -321,7 +332,7 @@ export function AnthologyDetail(props: {
                 onDecide={(c, kws, note, lines) => decide(index, c, kws, note, lines)}
                 onRebuildFrom={() => rebuildFrom(index)}
                 onUpdateHistory={() => props.execute([{ episode: index, task: { kind: "all" }, historyOnly: true }])}
-                onPromoteEntry={promoteEntry}
+                onPromoteEntry={(kind, e) => promoteEntry(index, kind, e)}
                 onRedo={() => redoEpisode(index)}
                 onRemove={() => removeEpisode(index)}
                 onPromote={(c) => promote(index, c)}
@@ -373,14 +384,40 @@ function EpisodePanel(props: {
 }) {
   const { anthology: a, index, episode: ep, run } = props;
   const cast = a.cast ?? [];
-  const picker = cast.length > 0 && (
-    <CastPicker
-      cast={cast}
-      selected={ep.castIds ?? []}
-      onChange={props.onCastIds}
-      locked={ep.bible.generated}
-      series={isSeries(a)}
-    />
+  // この話に渡される共通の設定(登場する話より前のものは渡されない)
+  const passed = sharedContextFor(a, index).entries ?? [];
+  const notYet = sharedEntries(a).filter((x) => firstEpisodeOf(a, x.entry) > index);
+  const hasShared = passed.length > 0 || notYet.length > 0;
+  const picker = (cast.length > 0 || hasShared) && (
+    <div className="stack">
+      {cast.length > 0 && (
+        <CastPicker
+          cast={cast}
+          selected={ep.castIds ?? []}
+          onChange={props.onCastIds}
+          locked={ep.bible.generated}
+          series={isSeries(a)}
+        />
+      )}
+      {hasShared && (
+        <div className="field">
+          <span>この話での共通の場所・品物・用語(「短編集の情報」タブで変更できます)</span>
+          <div className="row wrap">
+            {passed.map((e) => (
+              <span key={e.kind + e.name} className={e.status === "acquire" ? "tag tag-strong" : "tag"}>
+                {e.name}
+                {e.status === "acquire" && (e.acquireAt === "last" ? ":最後の場面で手に入れる" : ":この話の途中で手に入れる")}
+              </span>
+            ))}
+            {notYet.map((x) => (
+              <span key={x.kind + x.entry.id} className="tag tag-off" title="登場する話より前なので、この話には渡されません">
+                {x.entry.name}:まだ登場しない
+              </span>
+            ))}
+          </div>
+        </div>
+      )}
+    </div>
   );
   const [tab, setTab] = useState<"overview" | "production" | "body" | "bible">(
     ep.chapters.some((c) => c.body) ? "body" : "production",
@@ -584,6 +621,7 @@ function InfoTab({ anthology: a, mutate, settings }: { anthology: Anthology; mut
           settings={settings}
           context={{ title: a.title, keywords: a.keywords, note: a.note, world: a.world ?? "", cast: (a.cast ?? []).map((c) => c.name) }}
           episodeLabel={label}
+          episodes={a.episodes.map((e, i) => ({ id: e.id, label: `第${i + 1}話${e.title ? `「${e.title}」` : ""}` }))}
         />
       </Section>
       <Section title="短編集の情報">

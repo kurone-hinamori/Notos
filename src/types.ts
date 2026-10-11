@@ -73,6 +73,8 @@ export interface Chapter {
   issues: Issue[];
   /** この章で使うセリフと、使う場面(0始まり) */
   lines?: { text: string; scene: number }[];
+  /** この章の途中で手に入れる共通の品物と、手に入れる場面(0始まり) */
+  acquire?: { name: string; scene: number }[];
 }
 
 export type StoryStatus = "concept" | "producing" | "done";
@@ -127,6 +129,27 @@ export interface SharedEntry extends Entry {
   id: string;
   /** 話ごとの経緯(連作短編で、後の話に引き継ぐ) */
   history: { episodeId: string; text: string }[];
+  /** 登場する最初の話。これより前の話には渡さない。未設定は最初の話から */
+  fromEpisodeId?: string;
+  /** 品物のみ:登場する最初の話での状態。start: 最初から持っている、during: その話の途中で手に入れる。未設定は start */
+  acquire?: "start" | "during";
+  /** 品物のみ:途中で手に入れる場合の場面。auto: 構成の作成時に決める、last: 最後の場面。未設定は auto */
+  acquireAt?: "auto" | "last";
+  /** 登場・入手の条件(任意) */
+  condition?: string;
+}
+
+/** 各話に渡す共通の設定(場所・品物・用語)1件 */
+export interface SharedEntryContext {
+  kind: EntryKind;
+  name: string;
+  description: string;
+  history: string;
+  /** owned: 話の最初からある、acquire: この話の途中で手に入れる。未設定は owned */
+  status?: "owned" | "acquire";
+  /** acquire の場合、最後の場面で手に入れるかどうか */
+  acquireAt?: "auto" | "last";
+  condition?: string;
 }
 
 /** 短編集から各話へ渡す情報 */
@@ -134,7 +157,7 @@ export interface SharedContext {
   /** 出演する共通の登場人物(経緯はその話より前のものだけ) */
   characters: (CharacterSheet & { history: string })[];
   /** 共通の場所・品物・用語(経緯はその話より前のものだけ)。以前のデータには無いことがある */
-  entries?: { kind: EntryKind; name: string; description: string; history: string }[];
+  entries?: SharedEntryContext[];
   /** 共通の世界観 */
   world: string;
   /** 他の話で使われている名前(同名の別人を避ける) */

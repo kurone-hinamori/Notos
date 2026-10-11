@@ -1,5 +1,5 @@
 import type { ChatMessage } from "./ollama";
-import type { Bible, BookPlan, SharedContext, Story } from "../types";
+import type { Bible, BookPlan, SharedContext, SharedEntryContext, Story } from "../types";
 import { bibleToText, tail } from "./text";
 
 const EDITOR = "あなたは「小説家になろう」「カクヨム」で人気作を数多く手がけてきた、ライトノベル作家兼編集者です。";
@@ -64,6 +64,40 @@ export function sharedCharactersText(chars: SharedContext["characters"]): string
     .join("\n");
 }
 
+/** この話の途中で手に入れる共通の品物 */
+export function acquiringEntries(shared: SharedContext | undefined): SharedEntryContext[] {
+  return (shared?.entries ?? []).filter((e) => e.status === "acquire");
+}
+
+/**
+ * 場面ごとの「まだ手に入れていないもの/この場面で手に入れるもの」の指示。
+ * あらすじに書くだけでは入手前に使ってしまうことがあるので、場面単位で明示する。
+ */
+function acquisitionNotes(story: Story, ci: number, si: number): string {
+  const names = acquiringEntries(story.shared).map((e) => e.name);
+  if (!names.length) return "";
+  const notYet: string[] = [];
+  const now: string[] = [];
+  for (const name of names) {
+    const at = story.chapters.flatMap((c, i) => (c.acquire ?? []).filter((x) => x.name === name).map((x) => ({ ci: i, si: x.scene })))[0];
+    if (!at) continue;
+    if (ci < at.ci || (ci === at.ci && si < at.si)) notYet.push(name);
+    else if (ci === at.ci && si === at.si) now.push(name);
+  }
+  const parts: string[] = [];
+  if (notYet.length) {
+    parts.push(
+      `【まだ手に入れていないもの】${notYet.join("、")}\n- この場面の時点では、登場人物はまだこれを持っていない。持っている・使う・身に着けている描写をしないこと。\n- 目的や噂、伝説として話題にするのはよい。`,
+    );
+  }
+  if (now.length) {
+    parts.push(
+      `【この場面で手に入れるもの】${now.join("、")}\n- この場面で初めて手に入れる。場面の始まりではまだ持っておらず、この場面の出来事の結果として手に入れること。\n- 手に入れる瞬間を、省略せずに具体的に描くこと。\n- この場面の終わりには、登場人物がそれ自体を実際に手にしていること。手に入らない・別のものにすり替わる・失う、という結果にはしないこと。`,
+    );
+  }
+  return parts.length ? `\n${parts.join("\n")}\n` : "";
+}
+
 /** 短編集の共有情報をプロンプトに差し込む指示にする */
 function sharedInstructions(shared: SharedContext | undefined, target: "concept" | "bible"): string {
   if (!shared) return "";
@@ -78,14 +112,26 @@ function sharedInstructions(shared: SharedContext | undefined, target: "concept"
           : "これらの人物は確定済みの設定で、自動的に設定資料に追加されます。characters には含めないこと。他の人物との関係や経歴は、この設定と矛盾しないようにすること。"),
     );
   }
-  if (shared.entries?.length) {
+  const entryLine = (e: SharedEntryContext) =>
+    `■${e.name}(${KIND_LABEL[e.kind]}):${e.description}${e.condition ? `(条件:${e.condition})` : ""}${e.history ? `(これまでの経緯:${e.history})` : ""}`;
+  const owned = (shared.entries ?? []).filter((e) => e.status !== "acquire");
+  const acquiring = acquiringEntries(shared);
+  if (owned.length) {
     parts.push(
-      `【短編集の共通の設定(場所・品物・用語)】\n${shared.entries
-        .map((e) => `■${e.name}(${KIND_LABEL[e.kind]}):${e.description}${e.history ? `(これまでの経緯:${e.history})` : ""}`)
-        .join("\n")}\n` +
+      `【短編集の共通の設定(場所・品物・用語)】\n${owned.map(entryLine).join("\n")}\n` +
         (target === "concept"
           ? "これらは他の話と共通の設定です。物語に必要なものだけを登場させる。登場させる場合は、名称・設定・経緯を変えないこと。同じ役割の別のものを新しく作らないこと。"
           : "これらは確定済みの設定で、自動的に設定資料に追加されます。places・items・terms には含めないこと。同じ役割の別のものを新しく作らないこと。"),
+    );
+  }
+  if (acquiring.length) {
+    parts.push(
+      `【この話で初めて手に入れるもの】\n${acquiring.map(entryLine).join("\n")}\n` +
+        `この話が始まる時点では、登場人物はまだこれを持っていない。この話の中で手に入れる${
+          acquiring.some((e) => e.acquireAt === "last") ? "(「最後に手に入れる」と指定されたものは、物語の最後の場面で手に入れる)" : ""
+        }。手に入れる前に、持っていたり使ったりしないこと(目的・噂・伝説として語るのはよい)。名称・設定は変えないこと。` +
+        "この話の結末までに、登場人物がそれ自体を必ず実際に手に入れること。次の話からは持っているものとして扱うので、「手に入らなかった」「偽物だった」「別のものが本物だった」「手に入れたが失った」といった展開にはしないこと。" +
+        (target === "bible" ? "これらも自動的に設定資料に追加されるので、items には含めないこと。" : ""),
     );
   }
   if (shared.avoidNames.length) {
@@ -208,6 +254,19 @@ ${linesText(s.lines)}
 - これらのセリフは本文で必ず一字一句そのまま使う。それぞれのセリフが最も自然に、効果的に口にされる場面を決め、その場面の beats に、誰がどんな状況でそのセリフを言うのかを書き込むこと。
 - lineScenes に、すべてのセリフについて、line(上のセリフをそのまま)、chapter(章の番号。1始まり)、scene(その章の中の場面の番号。1始まり)を入れること。`
           : "\n- lineScenes は空配列にする。"
+      }${
+        acquiringEntries(s.shared).length
+          ? `
+
+【この話で初めて手に入れるもの】
+${acquiringEntries(s.shared)
+  .map((e) => `- ${e.name}${e.acquireAt === "last" ? "(必ず最後の場面で手に入れる)" : ""}${e.condition ? `(条件:${e.condition})` : ""}`)
+  .join("\n")}
+- 物語の始まりでは、登場人物はまだこれを持っていない。どの場面で手に入れるかを決め、その場面の beats に、どうやって手に入れるのかを書き込むこと。
+- その場面で、登場人物がそれ自体を必ず実際に手に入れること(次の話からは持っているものとして扱う)。「手に入らなかった」「偽物だった」「別のものが本物だった」「手に入れたが失った」という展開にはしないこと。
+- それより前の場面の beats では、持っている・使う展開にしないこと(探す、目指す、話題にするのはよい)。
+- acquireScenes に、上のそれぞれについて、name(上の名称をそのまま)、chapter(章の番号。1始まり)、scene(その章の中の場面の番号。1始まり)を入れること。`
+          : "\n- acquireScenes は空配列にする。"
       }`,
     },
   ];
@@ -263,7 +322,7 @@ ${
     : `- 物語を勝手に終わらせない。この場面は${next && si === ch.beats.length - 1 ? `次の章(${next.title})` : "次の場面"}へ続く途中経過である。`
 }
 - 描写・心理・会話を丁寧に書き込み、あっさり要約せず、場面として具体的に描く。
-${
+${acquisitionNotes(story, ci, si)}${
   opts.lines?.length
     ? `
 【この場面で必ず使うセリフ】
@@ -374,7 +433,12 @@ ${ch.body}
 本文に、次のような問題がないか点検してください。
 - 設定資料と食い違う人物の名前・呼称・年齢・外見・口調・能力・所持品・地名。
 - 前の章までの展開、同じ章内の出来事との時系列・事実の矛盾(死んだはずの人物が登場する、場所や時間の食い違いなど)。
-- 人物の呼び方や一人称の突然のブレ。
+- 人物の呼び方や一人称の突然のブレ。${ch.acquire?.length ? `\n${ch.acquire
+        .map(
+          (x) =>
+            `- 「${x.name}」は、この章の${x.scene + 1}番目の場面(場面は空行で区切られている)で初めて手に入れる。それより前に、登場人物が「${x.name}」を持っている・使っている描写がないか(話題にするだけならよい)。また、その場面で実際に「${x.name}」そのものを手に入れているか(手に入れていない、別のものにすり替わっている場合は問題として挙げる)。`,
+        )
+        .join("\n")}` : ""}
 
 見つかった問題だけを issues に列挙してください(最大10件)。
 - quote:本文中の該当箇所を、一字一句そのまま、10〜40字程度で抜き出す(本文中に1回しか現れない部分にする)。

@@ -19,6 +19,12 @@ export function sharedEntries(a: Anthology): { kind: EntryKind; entry: SharedEnt
   return ENTRY_KINDS.flatMap((kind) => (a.shared?.[kind] ?? []).map((entry) => ({ kind, entry })));
 }
 
+/** 共通の設定が登場する最初の話の位置(0始まり)。未設定や、その話が削除されている場合は最初の話。 */
+export function firstEpisodeOf(a: Anthology, entry: SharedEntry): number {
+  const i = entry.fromEpisodeId ? a.episodes.findIndex((e) => e.id === entry.fromEpisodeId) : 0;
+  return Math.max(0, i);
+}
+
 /** 他の話で使われている名前(共通の登場人物を除く)。同名の別人を避けるために使う。 */
 function usedNames(a: Anthology, index: number): string[] {
   const cast = a.cast ?? [];
@@ -50,12 +56,21 @@ export function sharedContextFor(a: Anthology, index: number): SharedContext {
           .join(" ")
       : "";
   const characters = castOf(a, a.episodes[index]).map(({ id: _id, history, ...c }) => ({ ...c, history: historyText(history) }));
-  const entries = sharedEntries(a).map(({ kind, entry }) => ({
-    kind,
-    name: entry.name,
-    description: entry.description,
-    history: historyText(entry.history),
-  }));
+  const entries = sharedEntries(a)
+    // 登場する話より前の話には渡さない(まだ手に入れていない品物などが出てこないように)
+    .filter(({ entry }) => firstEpisodeOf(a, entry) <= index)
+    .map(({ kind, entry }) => {
+      const acquiring = kind === "items" && entry.acquire === "during" && firstEpisodeOf(a, entry) === index;
+      return {
+        kind,
+        name: entry.name,
+        description: entry.description,
+        history: historyText(entry.history),
+        status: acquiring ? ("acquire" as const) : ("owned" as const),
+        acquireAt: acquiring ? (entry.acquireAt ?? "auto") : undefined,
+        condition: entry.condition?.trim() || undefined,
+      };
+    });
   const previous = series
     ? a.episodes
         .slice(0, index)
@@ -108,13 +123,19 @@ export function toShared(c: CharacterSheet): SharedCharacter {
 }
 
 /** 設定資料の項目を共通の設定にする */
-export function toSharedEntry(e: Pick<Entry, "name" | "description">): SharedEntry {
-  return { name: e.name, description: e.description, notes: "", id: newId(), history: [] };
+export function toSharedEntry(e: Pick<Entry, "name" | "description">, more: Partial<SharedEntry> = {}): SharedEntry {
+  return { name: e.name, description: e.description, notes: "", id: newId(), history: [], ...more };
 }
 
-/** 話の経緯を記録する対象(出演する共通の登場人物と、共通の場所・品物・用語)の名前 */
+/** 話の経緯を記録する対象(出演する共通の登場人物と、その話までに登場している共通の場所・品物・用語)の名前 */
 export function historyTargets(a: Anthology, e: Story): string[] {
-  return [...castOf(a, e).map((c) => c.name), ...sharedEntries(a).map((x) => x.entry.name)];
+  const index = a.episodes.findIndex((x) => x.id === e.id);
+  return [
+    ...castOf(a, e).map((c) => c.name),
+    ...sharedEntries(a)
+      .filter((x) => firstEpisodeOf(a, x.entry) <= index)
+      .map((x) => x.entry.name),
+  ];
 }
 
 /** 1話で起きた変化を共通の設定の経緯に記録する(同じ話の記録は置き換える) */
