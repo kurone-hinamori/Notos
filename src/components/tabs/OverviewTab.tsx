@@ -3,13 +3,15 @@ import type { Mutate } from "../StoryDetail";
 import { Field, LinesField, Section } from "../ui";
 
 export function OverviewTab({ story, mutate }: { story: Story; mutate: Mutate }) {
+  const short = story.form === "short";
   return (
     <div className="stack">
       <Section title="基本情報">
         <Field label="タイトル" value={story.title} onChange={(v) => mutate((s) => void (s.title = v))} />
         <Field label="キャッチコピー" value={story.tagline} onChange={(v) => mutate((s) => void (s.tagline = v))} />
-        <div className="two-col">
-          <Field label="ジャンル" value={story.genre} onChange={(v) => mutate((s) => void (s.genre = v))} />
+        {/* 短編集の話のジャンルは、短編集全体で共通(「短編集の情報」タブで決める) */}
+        <div className={short ? undefined : "two-col"}>
+          {!short && <Field label="ジャンル" value={story.genre} onChange={(v) => mutate((s) => void (s.genre = v))} />}
           <Field
             label="キーワード(読点区切り)"
             value={story.keywords.join("、")}

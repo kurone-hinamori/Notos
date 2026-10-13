@@ -56,6 +56,7 @@ export function createAnthology(opts: {
   world: string;
   cast: SharedCharacter[];
   shared: Partial<Record<EntryKind, SharedEntry[]>>;
+  genre: string;
 }): Anthology {
   const now = new Date().toISOString();
   const base = { keywords: opts.keywords, note: opts.note, author: opts.author, plan: { scenes: opts.scenes, charsPerScene: opts.charsPerScene } };
@@ -66,6 +67,7 @@ export function createAnthology(opts: {
     createdAt: now,
     updatedAt: now,
     title: opts.title,
+    genre: opts.genre,
     ...base,
     mode: opts.mode,
     world: opts.world,

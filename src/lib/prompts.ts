@@ -37,6 +37,8 @@ export interface ConceptRequest {
   shared?: SharedContext;
   /** 使ってほしいセリフ */
   lines?: string[];
+  /** ジャンル(短編集で全話共通のジャンルを決めている場合) */
+  genre?: string;
 }
 
 const KIND_LABEL = { places: "場所", items: "品物", terms: "用語" } as const;
@@ -175,7 +177,11 @@ ${
     : "- title:Web小説らしくキャッチーで、内容が伝わるタイトル(40字以内)。"
 }
 - tagline:読者の興味を引く一行キャッチコピー(40字以内)。
-- genre:ジャンル(例:異世界ファンタジー、現代ラブコメ、ミステリー)。
+${
+  req.genre?.trim()
+    ? `- genre:必ず「${req.genre.trim()}」とする。このジャンルの物語として考える。`
+    : "- genre:ジャンル(例:異世界ファンタジー、現代ラブコメ、ミステリー)。"
+}
 ${
   short
     ? `- 約${short.chars.toLocaleString()}字で書き切れる規模にする。登場人物と舞台を絞り、1つの出来事・1つの感情の変化を鮮やかに描く。

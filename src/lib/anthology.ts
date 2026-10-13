@@ -94,6 +94,7 @@ export function conceptRequestFor(
     note: prep.note,
     title: prep.title,
     lines: prep.lines,
+    genre: a.genre,
     avoidTitles: a.episodes.filter((x) => x.id !== e.id && x.title.trim()).map((x) => x.title),
     short: { chars: e.plan.scenes * e.plan.charsPerScene },
     shared: sharedContextFor(a, index),

@@ -459,6 +459,7 @@ function EpisodePanel(props: {
           short={{ chars: target }}
           avoidTitles={otherTitles}
           shared={sharedContextFor(a, index)}
+          genre={a.genre}
           extra={picker}
           confirmLabel={`この案で第${n}話を決定 →`}
           onConfirm={(p) => props.onDecide(p.concept, cleanKeywords(p.keywords), p.note, p.lines)}
@@ -626,6 +627,18 @@ function InfoTab({ anthology: a, mutate, settings }: { anthology: Anthology; mut
       </Section>
       <Section title="短編集の情報">
         <Field label="タイトル" value={a.title} onChange={(v) => mutate((d) => void (d.title = v))} />
+        <Field
+          label="ジャンル(全話共通。空欄の場合は、話ごとにガチャで決まります)"
+          value={a.genre ?? ""}
+          placeholder={a.episodes.find((e) => e.genre)?.genre || "例:異世界ファンタジー、現代ラブコメ、ミステリー"}
+          onChange={(v) =>
+            mutate((d) => {
+              d.genre = v;
+              // 概要が決まっている話にも、共通のジャンルを反映する
+              if (v.trim()) for (const e of d.episodes) if (e.title.trim() || e.synopsis.trim()) e.genre = v.trim();
+            })
+          }
+        />
         <Field
           label="全話に共通するキーワード(読点区切り。概要が未決定の話のガチャの初期値になります)"
           value={a.keywords.join("、")}

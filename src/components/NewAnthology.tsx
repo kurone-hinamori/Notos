@@ -27,6 +27,7 @@ export function NewAnthology(props: { settings: Settings; onCreate: (a: Antholog
   const [title, setTitle] = useState("");
   const [keywords, setKeywords] = useState("");
   const [note, setNote] = useState("");
+  const [genre, setGenre] = useState("");
   const [episodes, setEpisodes] = useState(12);
   const [scenes, setScenes] = useState(4);
   const [chars, setChars] = useState(2000);
@@ -51,6 +52,7 @@ export function NewAnthology(props: { settings: Settings; onCreate: (a: Antholog
         world,
         cast,
         shared,
+        genre: genre.trim(),
       }),
     );
 
@@ -67,6 +69,12 @@ export function NewAnthology(props: { settings: Settings; onCreate: (a: Antholog
         </p>
         <Section title="短編集の情報">
           <Field label="短編集のタイトル(あとで変更できます)" value={title} placeholder="無題の短編集" onChange={setTitle} />
+          <Field
+            label="ジャンル(全話共通。空欄の場合は、話ごとにガチャで決まります)"
+            value={genre}
+            placeholder="例:異世界ファンタジー、現代ラブコメ、ミステリー"
+            onChange={setGenre}
+          />
           <Field
             label="全話に共通するキーワード(任意・読点区切り。各話のガチャの初期値になります)"
             value={keywords}

@@ -70,6 +70,8 @@ export function ConceptGacha(props: {
   avoidTitles?: string[];
   /** 短編集から渡す共有情報(共通の登場人物など) */
   shared?: SharedContext;
+  /** ジャンルが決まっている場合(短編集の共通のジャンル) */
+  genre?: string;
   /** キーワード欄の上に表示する追加の入力(出演者の選択など) */
   extra?: ReactNode;
   confirmLabel: string;
@@ -94,7 +96,7 @@ export function ConceptGacha(props: {
       const avoid = [...st.pulls.slice(0, 8).map((p) => p.concept.title), ...(props.avoidTitles ?? [])];
       const concept = await pullConcept(
         props.settings,
-        { keywords: kws, note, avoidTitles: avoid, short: props.short, title: st.title, shared: props.shared, lines },
+        { keywords: kws, note, avoidTitles: avoid, short: props.short, title: st.title, shared: props.shared, lines, genre: props.genre },
         abort.signal,
       );
       if (!concept.title || !concept.synopsis) throw new Error("うまく生成できませんでした。もう一度引いてください。");

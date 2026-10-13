@@ -180,6 +180,8 @@ export interface Anthology {
   keywords: string[];
   note: string;
   author: string;
+  /** 全話に共通するジャンル。空の場合は、話ごとにガチャで決まる */
+  genre?: string;
   /** 新しく追加する話の規模の既定値 */
   plan: { scenes: number; charsPerScene: number };
   episodes: Story[];

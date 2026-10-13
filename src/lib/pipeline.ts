@@ -65,7 +65,8 @@ export async function pullConcept(settings: Settings, req: ConceptRequest, signa
     // タイトルを手入力した場合は、モデルが言い換えてもそのタイトルを使う
     title: req.title?.trim() || (c.title?.trim() ?? ""),
     tagline: c.tagline?.trim() ?? "",
-    genre: c.genre?.trim() ?? "",
+    // ジャンルが決まっている場合(短編集の共通のジャンル)は、モデルが言い換えてもそれを使う
+    genre: req.genre?.trim() || (c.genre?.trim() ?? ""),
     synopsis: c.synopsis?.trim() ?? "",
     characters: (c.characters ?? []).filter((x) => x.name?.trim()),
   };

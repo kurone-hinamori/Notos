@@ -195,7 +195,12 @@ export function useStoryManager(settings: Settings) {
             pushLog(`── ${prefix}「${target.get().title}」`);
             // 短編集の共通の設定・世界観・使用済みの名前を、生成の直前の状態で話に渡す
             const shared = sharedContextFor(ref.current, job.episode);
-            target.update((s) => void (s.shared = shared));
+            const genre = ref.current.genre?.trim();
+            target.update((s) => {
+              s.shared = shared;
+              // 短編集で共通のジャンルを決めている場合は、どの話もそのジャンルで書く
+              if (genre) s.genre = genre;
+            });
           }
           if (!job.historyOnly) await runTask(ctx, job.task);
           if (job.episode !== undefined) await afterEpisode(ctx, job);
