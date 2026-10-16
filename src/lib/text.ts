@@ -121,6 +121,12 @@ export function lineCore(line: string): string {
 /** 空白と、句読点・記号の違いを無視して比べるための正規化 */
 const squash = (s: string) => s.replace(/[\s　、。,.，．!?！？…‥・･―—─\-~〜～「」『』（）()]/g, "");
 
+/** 本文の中で指定のセリフが現れる位置(正規化した本文での位置)。無ければ -1 */
+export function linePos(body: string, line: string): number {
+  const core = squash(lineCore(line));
+  return core ? squash(body).indexOf(core) : -1;
+}
+
 /** 本文に指定のセリフが(空白と句読点・記号の違いを除いて)そのまま入っているか */
 export function hasLine(body: string, line: string): boolean {
   const core = squash(lineCore(line));

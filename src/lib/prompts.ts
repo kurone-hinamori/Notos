@@ -165,7 +165,7 @@ export function conceptPrompt(req: ConceptRequest): ChatMessage[] {
 ${note.trim() ? `補足の希望:${note.trim()}\n` : ""}${title?.trim() ? `タイトル:「${title.trim()}」(このタイトルは確定。変更しないこと)\n` : ""}
 ${shared ? `${shared}\n` : ""}${
         req.lines?.length
-          ? `\n【使ってほしいセリフ】\n${linesText(req.lines)}\nこれらのセリフは本文で必ずそのまま使います。どのセリフも自然に口にされる場面が生まれるような人物と展開にすること。\n`
+          ? `\n【使ってほしいセリフ】\n${linesText(req.lines)}\nこれらのセリフは本文で必ずそのまま、上から順番に使います。上のセリフから順に、それぞれが自然に口にされる場面が生まれるような人物と展開にすること。\n`
           : ""
       }
 【条件】
@@ -261,7 +261,8 @@ ${bibleToText(s.bible)}
 
 【使ってほしいセリフ】
 ${linesText(s.lines)}
-- これらのセリフは本文で必ず一字一句そのまま使う。それぞれのセリフが最も自然に、効果的に口にされる場面を決め、その場面の beats に、誰がどんな状況でそのセリフを言うのかを書き込むこと。
+- これらのセリフは本文で必ず一字一句そのまま、上から順番に使う。上のセリフほど前の場面、下のセリフほど後の場面になるようにし、順番を入れ替えないこと(同じ場面で続けて使う場合も、上から順に)。
+- それぞれのセリフが自然に、効果的に口にされる場面を決め、その場面の beats に、誰がどんな状況でそのセリフを言うのかを書き込むこと。
 - lineScenes に、すべてのセリフについて、line(上のセリフをそのまま)、chapter(章の番号。1始まり)、scene(その章の中の場面の番号。1始まり)を入れること。`
           : "\n- lineScenes は空配列にする。"
       }${
@@ -291,6 +292,8 @@ export function scenePrompt(opts: {
   existingInScene?: string;
   /** この場面で必ず使うセリフ(まだ本文に入っていないもの) */
   lines?: string[];
+  /** 後の場面で使うので、この場面ではまだ使わないセリフ */
+  later?: string[];
 }): ChatMessage[] {
   const { story, ci, si, target, previousTail, existingInScene } = opts;
   const ch = story.chapters[ci];
@@ -338,7 +341,16 @@ ${acquisitionNotes(story, ci, si)}${
 【この場面で必ず使うセリフ】
 ${linesText(opts.lines)}
 - 上のセリフを、この場面の会話として必ず使うこと。かぎ括弧の中の言葉は一字一句変えない(言い換え・省略・語尾の変更をしない)。
+- 複数ある場合は、上から順番に登場させること。
 - 話者が書かれている場合はその人物に言わせる。セリフが自然に出てくるように、直前の会話や状況を組み立てること。
+`
+    : ""
+}${
+  opts.later?.length
+    ? `
+【この場面ではまだ使わないセリフ】
+${linesText(opts.later)}
+- これらは後の場面で使うので、この場面では誰にも言わせないこと(同じ意味の言い回しも避ける)。
 `
     : ""
 }本文のみを出力してください。`;
@@ -546,7 +558,13 @@ ${opts.note.trim() ? `補足の希望:${opts.note.trim()}\n` : ""}${opts.world.t
 }
 
 /** 書いた場面に、指定のセリフを組み込んで書き直す */
-export function insertLinePrompt(story: Story, scene: string, lines: string[]): ChatMessage[] {
+export function insertLinePrompt(
+  story: Story,
+  scene: string,
+  lines: string[],
+  order: string[] = [],
+  early: string[] = [],
+): ChatMessage[] {
   return [
     {
       role: "system",
@@ -554,12 +572,16 @@ export function insertLinePrompt(story: Story, scene: string, lines: string[]): 
     },
     {
       role: "user",
-      content: `次の場面の本文には、作者が指定したセリフがまだ入っていません。場面の流れ・長さ・文体をできるだけ保ったまま、次のセリフが自然に口にされるように会話を足すか直して、場面全体を書き直してください。
-
-【必ず入れるセリフ】
-${linesText(lines)}
+      content: `次の場面の本文は、作者が指定したセリフの決まりを守れていません。場面の流れ・長さ・文体をできるだけ保ったまま、下の決まりを守るように会話を足すか直して、場面全体を書き直してください。
+${lines.length ? `\n【必ず入れるセリフ】\n${linesText(lines)}\n` : ""}${
+        early.length
+          ? `\n【この場面から取り除くセリフ】\n${linesText(early)}\n- これらは後の場面で使うセリフなので、この場面では言わせない。別の言葉に置き換えるか、その会話を削る。\n`
+          : ""
+      }
 - かぎ括弧の中の言葉は一字一句変えない(言い換え・省略・語尾の変更をしない)。
-- 話者が書かれている場合はその人物に言わせる。
+- 話者が書かれている場合はその人物に言わせる。${
+        order.length > 1 ? `\n- この場面のセリフは、次の順番で登場させる:\n${linesText(order)}` : ""
+      }
 - それ以外の部分はなるべく変えない。場面を短くしない。
 
 【場面の本文】

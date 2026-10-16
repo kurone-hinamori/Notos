@@ -28,7 +28,7 @@ import {
   castChangesSchema,
   entriesSchema,
 } from "./schemas";
-import { cleanProse, countChars, hasLine, joinScenes, lineCore, sameName, splitChunks, tail } from "./text";
+import { cleanProse, countChars, hasLine, joinScenes, lineCore, linePos, sameName, splitChunks, tail } from "./text";
 
 /** パイプラインが物語を読み書きするための窓口(UI 側が保存を担当する)。 */
 export interface Ctx {
@@ -202,16 +202,8 @@ async function stepOutline(ctx: Ctx) {
       lines: [],
       acquire: [],
     }));
-    // モデルが決めたセリフの場面を取り込む(指定したセリフと一致し、存在する場面を指すものだけ)
-    for (const a of raw.lineScenes ?? []) {
-      const line = (s.lines ?? []).find((l) => lineCore(l) === lineCore(a.line ?? "") || l === a.line?.trim());
-      const ch = s.chapters[(a.chapter ?? 0) - 1];
-      const scene = (a.scene ?? 0) - 1;
-      if (!line || !ch || scene < 0 || scene >= ch.beats.length) continue;
-      if (s.chapters.some((c) => c.lines?.some((x) => x.text === line))) continue;
-      ch.lines!.push({ text: line, scene });
-    }
-    assignLines(s);
+    // 使ってほしいセリフを、上から順に登場するように場面へ割り当てる
+    orderLines(s, raw.lineScenes ?? []);
 
     // この話の途中で手に入れる共通の品物について、手に入れる場面を決める
     const last = s.chapters.length - 1;
@@ -233,26 +225,104 @@ async function stepOutline(ctx: Ctx) {
   ctx.log(`全${chapters.length}章の構成を作成しました`);
 }
 
+/** ci 章 si 場面より後の場面で使うと決めたセリフ */
+function laterLines(s: Story, ci: number, si: number): string[] {
+  return s.chapters.flatMap((c, i) => (c.lines ?? []).filter((l) => i > ci || (i === ci && l.scene > si)).map((l) => l.text));
+}
+
+/** 場面の本文が、指定のセリフの決まりをどれだけ破っているか */
+function lineViolations(text: string, lines: string[], later: string[]) {
+  const missing = lines.filter((l) => !hasLine(text, l));
+  const pos = lines.map((l) => linePos(text, l)).filter((p) => p >= 0);
+  const outOfOrder = pos.filter((p, i) => i > 0 && p < pos[i - 1]).length;
+  const early = later.filter((l) => hasLine(text, l));
+  return { missing, outOfOrder, early, total: missing.length + outOfOrder + early.length };
+}
+
+/** 全章を通した場面の並び(章の順・場面の順) */
+function sceneSlots(s: Story): { ci: number; si: number }[] {
+  return s.chapters.flatMap((c, ci) => c.beats.map((_, si) => ({ ci, si })));
+}
+
+/** セリフが割り当てられている場面の通し番号。割り当てがなければ -1 */
+function assignedSlot(s: Story, line: string): number {
+  const slots = sceneSlots(s);
+  for (const [ci, c] of s.chapters.entries()) {
+    const hit = c.lines?.find((x) => x.text === line);
+    if (hit) return slots.findIndex((x) => x.ci === ci && x.si === hit.scene);
+  }
+  return -1;
+}
+
 /**
- * 使う場面が決まっていないセリフを、まだ書いていない場面に割り当てる。
- * モデルが場面を決めなかった場合や、構成を作った後にセリフを追加した場合のための保険。
+ * 使ってほしいセリフを、入力された順番(上から順)に登場するよう場面へ割り当てる。
+ * モデルが決めた場面は順番が入れ替わらない範囲で使い、順番が逆のものは直前のセリフと同じ場面に寄せる。
+ * モデルが決めなかったものは、前後のセリフの場面の間に等間隔に置く。
  */
-function assignLines(s: Story) {
-  const body = s.chapters.map((c) => c.body).join("\n");
-  const pending = (s.lines ?? []).filter(
-    (l) => !hasLine(body, l) && !s.chapters.some((c) => c.lines?.some((x) => x.text === l)),
-  );
-  if (!pending.length) return;
-  const slots: { ci: number; si: number }[] = [];
-  s.chapters.forEach((c, ci) => {
-    for (let si = c.sceneDone; si < c.beats.length; si++) slots.push({ ci, si });
+export function orderLines(s: Story, proposed: { line: string; chapter: number; scene: number }[]) {
+  const lines = s.lines ?? [];
+  const slots = sceneSlots(s);
+  if (!lines.length || !slots.length) return;
+  const want: (number | undefined)[] = lines.map((l) => {
+    const a = proposed.find((p) => lineCore(p.line ?? "") === lineCore(l) || p.line?.trim() === l);
+    if (!a) return undefined;
+    const g = slots.findIndex((x) => x.ci === (a.chapter ?? 0) - 1 && x.si === (a.scene ?? 0) - 1);
+    return g >= 0 ? g : undefined;
   });
-  if (!slots.length) return;
-  pending.forEach((line, k) => {
-    // 物語全体にばらけるように、残りの場面へ等間隔に置く
-    const slot = slots[Math.min(slots.length - 1, Math.floor(((k + 1) * slots.length) / (pending.length + 1)))];
-    const ch = s.chapters[slot.ci];
-    (ch.lines ??= []).push({ text: line, scene: slot.si });
+  // 提案のうち、順番どおりに並ぶ最も多い組(最長の非減少部分列)だけを採用し、残りは決め直す。
+  // (1つだけ外れた提案のせいで、後のセリフがすべて最後の場面に押し込まれるのを防ぐ)
+  const defined = want.map((g, i) => ({ g, i })).filter((x): x is { g: number; i: number } => x.g !== undefined);
+  const len = defined.map(() => 1);
+  const from = defined.map(() => -1);
+  for (let b = 0; b < defined.length; b++) {
+    for (let a = 0; a < b; a++) {
+      if (defined[a].g <= defined[b].g && len[a] + 1 > len[b]) {
+        len[b] = len[a] + 1;
+        from[b] = a;
+      }
+    }
+  }
+  const keep = new Set<number>();
+  for (let k = len.indexOf(Math.max(0, ...len)); k >= 0; k = from[k]) keep.add(defined[k].i);
+  want.forEach((_, i) => {
+    if (!keep.has(i)) want[i] = undefined;
+  });
+  for (let i = 0; i < want.length; i++) {
+    if (want[i] !== undefined) continue;
+    let j = i;
+    while (j < want.length && want[j] === undefined) j++;
+    const lo = i > 0 ? want[i - 1]! : 0;
+    const hi = j < want.length ? want[j]! : slots.length - 1;
+    for (let k = 0; k < j - i; k++) want[i + k] = Math.round(lo + ((k + 1) * (hi - lo)) / (j - i + 1));
+    i = j - 1;
+  }
+  lines.forEach((text, i) => {
+    const slot = slots[want[i]!];
+    (s.chapters[slot.ci].lines ??= []).push({ text, scene: slot.si });
+  });
+}
+
+/**
+ * 使う場面が決まっていないセリフを、まだ書いていない場面に割り当てる(構成を作った後にセリフを追加した場合)。
+ * 上から順に登場するよう、前後のセリフの場面の間に置く。
+ */
+export function assignLines(s: Story) {
+  const lines = s.lines ?? [];
+  const body = s.chapters.map((c) => c.body).join("\n");
+  const slots = sceneSlots(s);
+  // まだ書いていない最初の場面
+  const firstOpen = slots.findIndex((x) => x.si >= s.chapters[x.ci].sceneDone);
+  if (firstOpen < 0) return;
+  lines.forEach((line, i) => {
+    if (hasLine(body, line) || assignedSlot(s, line) >= 0) return;
+    const before = lines.slice(0, i).map((l) => assignedSlot(s, l)).filter((g) => g >= 0);
+    const after = lines.slice(i + 1).map((l) => assignedSlot(s, l)).filter((g) => g >= 0);
+    const lo = Math.max(firstOpen, ...before);
+    const hi = Math.max(lo, after.length ? Math.min(...after) : slots.length - 1);
+    const slot = slots[Math.round((lo + hi) / 2)];
+    (s.chapters[slot.ci].lines ??= []).push({ text: line, scene: slot.si });
+    // 同じ場面の中でも、入力された順に並べる
+    s.chapters[slot.ci].lines!.sort((x, y) => lines.indexOf(x.text) - lines.indexOf(y.text));
   });
 }
 
@@ -270,8 +340,9 @@ function previousTail(story: Story, ci: number): string {
 async function writeScene(ctx: Ctx, ci: number, si: number) {
   const { settings } = ctx;
   const target = ctx.get().plan.charsPerScene;
-  // この場面で使うと決めたセリフ
+  // この場面で使うと決めたセリフ(上から順)と、後の場面で使うのでこの場面ではまだ使わないセリフ
   const lines = (ctx.get().chapters[ci].lines ?? []).filter((l) => l.scene === si).map((l) => l.text);
+  const later = laterLines(ctx.get(), ci, si);
   let scene = "";
   // 目標の約7割に満たない場合は最大2回まで書き足す
   for (let pass = 0; pass < 3; pass++) {
@@ -286,6 +357,7 @@ async function writeScene(ctx: Ctx, ci: number, si: number) {
         previousTail: scene ? tail(scene, 900) : previousTail(story, ci),
         existingInScene: scene || undefined,
         lines: lines.filter((l) => !hasLine(scene, l)),
+        later,
       }),
       signal: ctx.signal,
       numPredict: Math.round(target * 3),
@@ -299,27 +371,28 @@ async function writeScene(ctx: Ctx, ci: number, si: number) {
   }
   if (!scene) throw new Error("本文を生成できませんでした");
 
-  // 指定のセリフが入っていなければ、セリフを組み込んで書き直す(最大2回)
+  // 指定のセリフが「すべて入っている」「上から順」「後の場面のセリフを先取りしていない」かを確かめ、
+  // 守られていなければ書き直してもらう(最大2回。違反が減った場合だけ採用する)
   for (let attempt = 0; attempt < 2; attempt++) {
-    const missing = lines.filter((l) => !hasLine(scene, l));
-    if (!missing.length) break;
+    const v = lineViolations(scene, lines, later);
+    if (!v.total) break;
     throwIfAborted(ctx);
-    ctx.stage(`第${ci + 1}章 場面${si + 1} に指定のセリフを組み込み中`);
+    ctx.stage(`第${ci + 1}章 場面${si + 1} の指定のセリフを直しています`);
     const raw = await chat(settings, {
-      messages: insertLinePrompt(ctx.get(), scene, missing),
+      messages: insertLinePrompt(ctx.get(), scene, v.missing, lines, v.early),
       signal: ctx.signal,
       numPredict: Math.round(scene.length * 2.5) + 512,
       temperature: 0.5,
       onToken: (t) => ctx.stream(t),
     });
     const cand = cleanProse(raw);
-    // 既に入っていたセリフを落とさず、極端に短く・長くなっていない場合だけ採用する
-    const kept = lines.every((l) => !hasLine(scene, l) || hasLine(cand, l));
-    const gained = missing.some((l) => hasLine(cand, l));
-    if (cand && kept && gained && cand.length > scene.length * 0.8 && cand.length < scene.length * 1.6) scene = cand;
+    const better = lineViolations(cand, lines, later).total < v.total;
+    if (cand && better && cand.length > scene.length * 0.8 && cand.length < scene.length * 1.6) scene = cand;
   }
-  const unused = lines.filter((l) => !hasLine(scene, l));
-  if (unused.length) ctx.log(`第${ci + 1}章 場面${si + 1}:指定のセリフを入れられませんでした(${unused.join(" / ")})`);
+  const left = lineViolations(scene, lines, later);
+  if (left.missing.length) ctx.log(`第${ci + 1}章 場面${si + 1}:指定のセリフを入れられませんでした(${left.missing.join(" / ")})`);
+  if (left.outOfOrder) ctx.log(`第${ci + 1}章 場面${si + 1}:指定のセリフの順番を直せませんでした`);
+  if (left.early.length) ctx.log(`第${ci + 1}章 場面${si + 1}:後の場面のセリフを先に使っています(${left.early.join(" / ")})`);
 
   ctx.update((s) => {
     const ch = s.chapters[ci];
@@ -508,6 +581,22 @@ async function checkConsistency(ctx: Ctx, ci: number) {
         issues.push({
           quote: "",
           problem: `指定したセリフ「${lineCore(l.text)}」が本文に入っていません(場面${l.scene + 1}で使う予定でした)。本文に書き足すか、この章を再生成してください。`,
+          replacement: "",
+          applied: false,
+        });
+      }
+    }
+    // 指定したセリフが上から順に登場しているか
+    const order = s.lines ?? [];
+    const used = (ch.lines ?? [])
+      .map((l) => ({ text: l.text, at: linePos(ch.body, l.text), rank: order.indexOf(l.text) }))
+      .filter((x) => x.at >= 0)
+      .sort((x, y) => x.at - y.at);
+    for (let k = 1; k < used.length; k++) {
+      if (used[k].rank < used[k - 1].rank) {
+        issues.push({
+          quote: "",
+          problem: `指定したセリフの順番が入れ替わっています。「${lineCore(used[k].text)}」が「${lineCore(used[k - 1].text)}」より後に出てきます。本文を直すか、この章を再生成してください。`,
           replacement: "",
           applied: false,
         });

@@ -1,6 +1,17 @@
 import { useState, type ReactNode } from "react";
 import type { Story } from "../types";
-import { hasLine, parseLines } from "../lib/text";
+import { hasLine, linePos, parseLines } from "../lib/text";
+
+/** 使われているセリフが、入力された順番(上から順)に本文に出てくるかを調べる */
+function outOfOrder(chapters: Story["chapters"], lines: string[]): boolean {
+  const pos = lines
+    .map((l) => {
+      const ci = chapters.findIndex((c) => hasLine(c.body, l));
+      return ci < 0 ? null : [ci, linePos(chapters[ci].body, l)];
+    })
+    .filter((x): x is number[] => x !== null);
+  return pos.some((p, i) => i > 0 && (p[0] < pos[i - 1][0] || (p[0] === pos[i - 1][0] && p[1] < pos[i - 1][1])));
+}
 
 /**
  * 「使ってほしいセリフ」の入力欄(1行に1つ)。
@@ -14,7 +25,7 @@ export function LinesField(props: { lines: string[]; onChange: (lines: string[])
   const written = chapters.some((c) => c.body.trim());
   return (
     <label className="field">
-      <span>{props.label ?? "使ってほしいセリフ(1行に1つ。本文で必ずそのまま使います)"}</span>
+      <span>{props.label ?? "使ってほしいセリフ(1行に1つ。本文で必ずそのまま、上から順番に使います)"}</span>
       <textarea
         rows={3}
         value={text}
@@ -24,6 +35,9 @@ export function LinesField(props: { lines: string[]; onChange: (lines: string[])
           props.onChange(parseLines(e.target.value));
         }}
       />
+      {written && lines.length > 0 && outOfOrder(chapters, lines) && (
+        <p className="error small-text">本文の中で、セリフの順番が入力の順番と違っています。</p>
+      )}
       {written && lines.length > 0 && (
         <ul className="line-status">
           {lines.map((l) => {

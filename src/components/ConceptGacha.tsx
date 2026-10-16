@@ -177,7 +177,7 @@ export function ConceptGacha(props: {
           />
         </label>
         <label className="field">
-          <span>使ってほしいセリフ(任意・1行に1つ。本文で必ずそのまま使います)</span>
+          <span>使ってほしいセリフ(任意・1行に1つ。本文で必ずそのまま、上から順番に使います)</span>
           <textarea
             rows={3}
             value={st.lines}
