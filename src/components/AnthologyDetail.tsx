@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import type { Anthology, AnthologyMode, CharacterSheet, Concept, Entry, EntryKind, Settings, SharedCharacter, Story } from "../types";
 import type { Job, RunState } from "../hooks";
 import type { Task } from "../lib/pipeline";
@@ -427,6 +427,16 @@ function EpisodePanel(props: {
   const otherTitles = a.episodes.filter((e) => e.id !== ep.id && e.title).map((e) => e.title);
   const runningThis = run.running && run.storyId === ep.id;
   const undecided = isUndecided(ep);
+
+  // 概要を決定したら「制作」タブを開き、画面を先頭に戻す(決定ボタンは画面の下の方にあるため)
+  const wasUndecided = useRef(undecided);
+  useEffect(() => {
+    if (wasUndecided.current && !undecided) {
+      setTab("production");
+      document.querySelector(".main")?.scrollTo({ top: 0 });
+    }
+    wasUndecided.current = undecided;
+  }, [undecided]);
 
   // 概要が未決定のあいだは、ガチャ欄の入力(タイトル・キーワード・補足・セリフ)を「仕込み」として話に保存する。
   // おまかせ生成は、この仕込みを使ってあらすじを自動で作る。

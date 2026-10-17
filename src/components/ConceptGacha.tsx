@@ -213,8 +213,16 @@ export function ConceptGacha(props: {
       </section>
 
       <section className="card concept">
-        {!current && <p className="muted">ここにタイトル・あらすじ・登場人物の案が表示されます。気に入るまで何度でもガチャを引けます。</p>}
-        {current && (
+        {/* ガチャを引いている間は前回の案を消して、新しい結果が出たことが分かるようにする */}
+        {st.busy && (
+          <div className="gacha-waiting">
+            <div className="spinner" aria-hidden="true" />
+            <p>新しい案を考えています…</p>
+            <small className="muted">モデルによっては1〜2分かかります。前の案は左の「これまでの案」から見直せます。</small>
+          </div>
+        )}
+        {!st.busy && !current && <p className="muted">ここにタイトル・あらすじ・登場人物の案が表示されます。気に入るまで何度でもガチャを引けます。</p>}
+        {!st.busy && current && (
           <>
             <div className="muted small-text">{current.concept.genre}</div>
             <h2>{current.concept.title}</h2>

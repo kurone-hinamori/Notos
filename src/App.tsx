@@ -91,6 +91,7 @@ export default function App() {
   const create = async (s: Story) => {
     await mgr.adopt(s);
     setView({ name: "detail", id: s.id, tab: "production" });
+    document.querySelector(".main")?.scrollTo({ top: 0 });
   };
 
   const createAnthology = async (a: Anthology) => {
