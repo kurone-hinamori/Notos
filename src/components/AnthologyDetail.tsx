@@ -19,6 +19,7 @@ import {
   castOf,
   clearHistory,
   firstEpisodeOf,
+  isKakuyomu,
   isSeries,
   resetEpisode,
   sharedContextFor,
@@ -27,6 +28,7 @@ import {
   toSharedEntry,
 } from "../lib/anthology";
 import { SharedEntriesEditor } from "./SharedEntriesEditor";
+import { KakuyomuInfoEditor, KakuyomuPosts } from "./Kakuyomu";
 import { parseLines, sameName } from "../lib/text";
 
 /** 短編集の種類の選択 */
@@ -54,10 +56,15 @@ type MutateAnthology = (m: (draft: Anthology) => void) => void;
 const TABS = [
   ["episodes", "話の一覧と制作"],
   ["info", "短編集の情報"],
+  ["kakuyomu", "カクヨム投稿"],
   ["art", "表紙・挿絵"],
   ["export", "EPUB出力"],
 ] as const;
 type TabId = (typeof TABS)[number][0];
+
+/** 短編集とカクヨム連載で表示するタブと名前 */
+const tabsFor = (serial: boolean) =>
+  TABS.filter(([id]) => serial || id !== "kakuyomu").map(([id, label]) => [id, serial && id === "info" ? "連載の情報" : label] as const);
 
 const REBUILD_CONCEPT_QUESTION =
   "あらすじも作り直しますか?\n\n" +
@@ -90,6 +97,7 @@ export function AnthologyDetail(props: {
   onBack: () => void;
 }) {
   const { anthology: a, run, mutate } = props;
+  const serial = isKakuyomu(a);
   const [tab, setTab] = useState<TabId>("episodes");
   const [selected, setSelected] = useState(() => Math.max(0, a.episodes.findIndex((e) => e.status !== "done")));
   // 話ごとのガチャの状態(話を切り替えても、引いた案や引いている最中の結果を失わないようにここで持つ)
@@ -208,10 +216,10 @@ export function AnthologyDetail(props: {
       <header className="page-head">
         <div>
           <button className="link" onClick={props.onBack}>
-            ← 短編集の一覧へ
+            {serial ? "← 連載の一覧へ" : "← 短編集の一覧へ"}
           </button>
           <h2>
-            {a.title || "(無題の短編集)"} <span className="badge">短編集</span>
+            {a.title || (serial ? "(無題の連載)" : "(無題の短編集)")} <span className="badge">{serial ? "カクヨム連載" : "短編集"}</span>
           </h2>
           <span className="muted small-text">
             全{a.episodes.length}話(概要決定 {decided.length} / 完成 {a.episodes.filter((e) => e.status === "done").length})・
@@ -222,7 +230,7 @@ export function AnthologyDetail(props: {
       </header>
 
       <nav className="tabs">
-        {TABS.map(([id, label]) => (
+        {tabsFor(serial).map(([id, label]) => (
           <button key={id} className={tab === id ? "active" : ""} onClick={() => setTab(id)}>
             {label}
           </button>
@@ -344,6 +352,7 @@ export function AnthologyDetail(props: {
       )}
 
       {tab === "info" && <InfoTab anthology={a} mutate={mutate} settings={props.settings} />}
+      {tab === "kakuyomu" && <KakuyomuPosts anthology={a} mutate={mutate} start={props.start} running={run.running} />}
       {tab === "art" && <ArtTab />}
       {tab === "export" && (
         <ExportTab
@@ -606,8 +615,17 @@ function InfoTab({ anthology: a, mutate, settings }: { anthology: Anthology; mut
   };
   return (
     <div className="stack">
-      <Section title="短編集の種類">
-        <ModeSelect mode={a.mode ?? "omnibus"} onChange={(m) => mutate((d) => void (d.mode = m))} />
+      {isKakuyomu(a) && (
+        <Section title="カクヨムの掲載情報(キャッチコピー・紹介文・タグ)">
+          <KakuyomuInfoEditor anthology={a} mutate={mutate} settings={settings} />
+        </Section>
+      )}
+      <Section title={isKakuyomu(a) ? "世界観" : "短編集の種類"}>
+        {isKakuyomu(a) ? (
+          <p className="muted small-text">カクヨム連載は連作短編として作ります(前の話の出来事が次の話に引き継がれます)。</p>
+        ) : (
+          <ModeSelect mode={a.mode ?? "omnibus"} onChange={(m) => mutate((d) => void (d.mode = m))} />
+        )}
         <Field
           label="共通の世界観・舞台(全話に適用されます)"
           rows={3}
@@ -635,8 +653,8 @@ function InfoTab({ anthology: a, mutate, settings }: { anthology: Anthology; mut
           episodes={a.episodes.map((e, i) => ({ id: e.id, label: `第${i + 1}話${e.title ? `「${e.title}」` : ""}` }))}
         />
       </Section>
-      <Section title="短編集の情報">
-        <Field label="タイトル" value={a.title} onChange={(v) => mutate((d) => void (d.title = v))} />
+      <Section title={isKakuyomu(a) ? "連載の情報" : "短編集の情報"}>
+        <Field label={isKakuyomu(a) ? "連載の名前(作品名)" : "タイトル"} value={a.title} onChange={(v) => mutate((d) => void (d.title = v))} />
         <Field
           label="ジャンル(全話共通。空欄の場合は、話ごとにガチャで決まります)"
           value={a.genre ?? ""}

@@ -1,12 +1,22 @@
 import type { Anthology, CharacterSheet, Concept, Entry, EntryKind, SharedCharacter, SharedContext, SharedEntry, Story } from "../types";
 import { emptyBible } from "../types";
 import type { ConceptRequest } from "./prompts";
-import { newId, sameName } from "./text";
+import { newId, sameName, tail as tailOf } from "./text";
 
 export const ENTRY_KINDS: EntryKind[] = ["places", "items", "terms"];
 export const ENTRY_LABEL: Record<EntryKind, string> = { places: "場所", items: "品物", terms: "用語" };
 
-export const isSeries = (a: Anthology) => a.mode === "series";
+/** カクヨム連載は、連作短編として扱う */
+export const isKakuyomu = (a: Anthology) => a.format === "kakuyomu";
+export const isSeries = (a: Anthology) => a.mode === "series" || isKakuyomu(a);
+
+/** 連載1回分(=場面)ごとの本文。場面は空行で区切られている */
+export function postsOf(e: Story): { title: string; body: string }[] {
+  const ch = e.chapters[0];
+  if (!ch?.body.trim()) return [];
+  const bodies = ch.body.split(/\n\s*\n/).map((b) => b.trim()).filter(Boolean);
+  return bodies.map((body, i) => ({ title: ch.sceneTitles?.[i] ?? "", body }));
+}
 
 /** 話に出演する共通の登場人物 */
 export function castOf(a: Anthology, e: Story): SharedCharacter[] {
@@ -79,7 +89,17 @@ export function sharedContextFor(a: Anthology, index: number): SharedContext {
         .map(({ e }) => `・「${e.title}」:${(e.chapters[0]?.digest || e.synopsis).slice(0, 160)}`)
         .join("\n")
     : "";
-  return { characters, entries, world: a.world ?? "", avoidNames: usedNames(a, index), previous };
+  const e = a.episodes[index];
+  const serial = isKakuyomu(a)
+    ? {
+        index,
+        total: a.episodes.length,
+        scenes: e.plan.scenes,
+        chars: e.plan.charsPerScene,
+        prevTail: index > 0 ? tailOf(a.episodes[index - 1].chapters.map((c) => c.body).join("\n"), 600) : undefined,
+      }
+    : undefined;
+  return { characters, entries, world: a.world ?? "", avoidNames: usedNames(a, index), previous, serial };
 }
 
 /** index 番目の話のあらすじをガチャ・おまかせで考えるときの条件 */

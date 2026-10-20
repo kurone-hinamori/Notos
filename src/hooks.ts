@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import type { Anthology, Doc, Settings, Story } from "./types";
 import { isAnthology } from "./types";
-import { isUndecided, loadStory, saveStory } from "./lib/storage";
+import { deleteStory, isUndecided, loadStory, saveStory } from "./lib/storage";
 import { pullConcept, runTask, summarizeCastChanges, type Ctx, type Task } from "./lib/pipeline";
 import { applyConcept, conceptRequestFor, hasOpenIssues, historyTargets, isSeries, recordHistory, sharedContextFor } from "./lib/anthology";
 
@@ -99,6 +99,21 @@ export function useStoryManager(settings: Settings) {
   const close = useCallback(async () => {
     await flush();
   }, [flush]);
+
+  /**
+   * ドキュメントを削除する。開いているものを削除する場合は、保存待ちを取り消して手放す
+   * (手放さないと、別の画面へ移るときの自動保存で、削除したものが保存し直されてしまう)。
+   */
+  const remove = useCallback(async (id: string) => {
+    if (abort.current && ref.current?.id === id) throw new Error("生成中のため削除できません。停止してから削除してください。");
+    if (ref.current?.id === id) {
+      window.clearTimeout(timer.current);
+      timer.current = undefined;
+      ref.current = null;
+      setDoc(null);
+    }
+    await deleteStory(id);
+  }, []);
 
   /** 長編ならドキュメントそのもの、短編集なら指定した話を読み書きする窓口を返す。 */
   const select = useCallback(
@@ -241,5 +256,5 @@ export function useStoryManager(settings: Settings) {
     return () => window.removeEventListener("beforeunload", onHide);
   }, []);
 
-  return { doc, story: isAnthology(doc) ? null : doc, anthology: isAnthology(doc) ? doc : null, run, mutate, open, adopt, close, start, execute, stop, flush };
+  return { doc, story: isAnthology(doc) ? null : doc, anthology: isAnthology(doc) ? doc : null, run, mutate, open, adopt, close, remove, start, execute, stop, flush };
 }

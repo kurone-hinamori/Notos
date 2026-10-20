@@ -148,9 +148,12 @@ function sharedInstructions(shared: SharedContext | undefined, target: "concept"
 
 export function conceptPrompt(req: ConceptRequest): ChatMessage[] {
   const { keywords, note, avoidTitles, short, title } = req;
-  const form = short
-    ? `1話で完結する短編ライトノベル(約${short.chars.toLocaleString()}字)`
-    : "長編ライトノベル(文庫本1冊分)";
+  const serial = req.shared?.serial;
+  const form = serial
+    ? `Web連載のライトノベルの第${serial.index + 1}話(全${serial.total}話。約${short?.chars.toLocaleString()}字を${serial.scenes}回に分けて投稿する)`
+    : short
+      ? `1話で完結する短編ライトノベル(約${short.chars.toLocaleString()}字)`
+      : "長編ライトノベル(文庫本1冊分)";
   const shared = sharedInstructions(req.shared, "concept");
   return [
     {
@@ -183,10 +186,14 @@ ${
     : "- genre:ジャンル(例:異世界ファンタジー、現代ラブコメ、ミステリー)。"
 }
 ${
-  short
-    ? `- 約${short.chars.toLocaleString()}字で書き切れる規模にする。登場人物と舞台を絞り、1つの出来事・1つの感情の変化を鮮やかに描く。
+  serial
+    ? `- これは連載の第${serial.index + 1}話です(全${serial.total}話)。約${short?.chars.toLocaleString()}字で、この話の中に1つの山場を作る。
+- ${serial.index + 1 === serial.total ? "これは最終話です。これまでの伏線を回収し、物語全体を完結させる。" : serial.index === 0 ? "これは第1話です。主人公と世界の魅力、物語全体の目的や謎を提示し、続きが読みたくなる引きで終える。物語全体はまだ終わらせない。" : "前の話の続きとして始め、この話の出来事に区切りをつけつつ、次の話への引きを残して終える。物語全体はまだ終わらせない。"}
+- synopsis:この話のあらすじ。250〜400字。話の終わり方まで含める。あらすじ中の`
+    : short
+      ? `- 約${short.chars.toLocaleString()}字で書き切れる規模にする。登場人物と舞台を絞り、1つの出来事・1つの感情の変化を鮮やかに描く。
 - synopsis:あらすじ。250〜400字。起承転結と結末まで含め、この1話で物語が完結するようにする。あらすじ中の`
-    : "- synopsis:あらすじ。400〜600字。起承転結と、結末の方向性まで含める。あらすじ中の"
+      : "- synopsis:あらすじ。400〜600字。起承転結と、結末の方向性まで含める。あらすじ中の"
 }人物名は、必ず characters に挙げた name と一字一句同じ表記にする(別名・愛称を使わない)。
 - characters:${short ? "登場人物を2〜4名。主人公と、物語の鍵となる人物を含める。" : "登場人物を4〜6名。主人公、ヒロインまたは相棒、敵対者・黒幕などを含める。"}name は日本語表記の氏名、role は役割、summary は人物像を60〜100字で。
 ${avoidTitles.length ? `- 次の案とは内容もタイトルも被らないこと:${avoidTitles.join(" / ")}` : ""}`,
@@ -213,7 +220,13 @@ export function biblePrompt(s: Story): ChatMessage[] {
     },
     {
       role: "user",
-      content: `次の企画から、設定資料を作成してください。${short ? `これは約${storyLength(s).toLocaleString()}字の1話完結の短編です。短編に必要な分だけを簡潔に、しかし具体的に書いてください。` : ""}
+      content: `次の企画から、設定資料を作成してください。${
+        s.shared?.serial
+          ? `これは連載小説の第${s.shared.serial.index + 1}話(約${storyLength(s).toLocaleString()}字)です。この話に必要な分だけを簡潔に、しかし具体的に書いてください。`
+          : short
+            ? `これは約${storyLength(s).toLocaleString()}字の1話完結の短編です。短編に必要な分だけを簡潔に、しかし具体的に書いてください。`
+            : ""
+      }
 
 ${conceptText(s)}
 ${s.shared ? `\n${sharedInstructions(s.shared, "bible")}\n` : ""}
@@ -246,7 +259,13 @@ ${bibleToText(s.bible)}
 
 この物語の章構成を作ってください。${
         isShort(s)
-          ? `これは約${storyLength(s).toLocaleString()}字の1話完結の短編なので、章は1つだけです。beats で導入・展開・山場・結末を組み立て、最後の場面で物語を完結させてください。`
+          ? s.shared?.serial
+            ? `これは連載小説の第${s.shared.serial.index + 1}話(全${s.shared.serial.total}話。約${storyLength(s).toLocaleString()}字)で、章は1つだけです。各場面はそれぞれ連載の1回分(約${s.plan.charsPerScene.toLocaleString()}字)として投稿するので、場面ごとに見せ場を作り、場面の終わりは次の回が読みたくなる引きにしてください。${
+                s.shared.serial.index + 1 === s.shared.serial.total
+                  ? "これは最終話なので、最後の場面で物語全体を完結させてください。"
+                  : "最後の場面はこの話の区切りとし、次の話への引きを残してください(物語全体はまだ終わらせない)。"
+              }`
+            : `これは約${storyLength(s).toLocaleString()}字の1話完結の短編なので、章は1つだけです。beats で導入・展開・山場・結末を組み立て、最後の場面で物語を完結させてください。`
           : ""
       }
 
@@ -305,7 +324,8 @@ export function scenePrompt(opts: {
   const lastScene = ci === story.chapters.length - 1 && si === ch.beats.length - 1;
   const outline = story.chapters.map((c, i) => `第${i + 1}章「${c.title}」:${c.plan}`).join("\n");
 
-  const system = `${EDITOR}設定資料と構成に忠実に、${isShort(story) ? "1話完結の短編小説" : "長編小説"}の本文を一場面ずつ執筆します。
+  const serial = story.shared?.serial;
+  const system = `${EDITOR}設定資料と構成に忠実に、${serial ? "Web連載小説" : isShort(story) ? "1話完結の短編小説" : "長編小説"}の本文を一場面ずつ執筆します。
 
 【設定資料】
 ${bibleToText(story.bible)}
@@ -323,16 +343,30 @@ ${prev ? `【これまでの展開】\n${prev}\n` : ""}
 この章の場面構成:
 ${ch.beats.map((b, i) => `${i + 1}. ${b}${i === si ? "  ←今回執筆する場面" : ""}`).join("\n")}
 
-${previousTail ? `【直前の本文(この続きから書く)】\n${previousTail}\n` : "【これが物語の冒頭です】\n"}
+${
+  previousTail
+    ? `【直前の本文(この続きから書く)】\n${previousTail}\n`
+    : serial && serial.index > 0
+      ? `【前の話までのあらすじ】\n${story.shared?.previous || "(なし)"}\n${serial.prevTail ? `\n【前の話の最後の本文】\n${serial.prevTail}\n` : ""}\nこれは連載の第${serial.index + 1}話の書き出しです。前の話の続きとして、自然につなげて書き始めてください。\n`
+      : "【これが物語の冒頭です】\n"
+}
 ${existingInScene ? `【この場面でここまでに書いた部分】\n${tail(existingInScene, 1500)}\n\n上の続きを、同じ場面のまま書き足してください。場面を終わらせたり、まとめに入ったりしないでください。\n` : ""}
 【今回の指示】
 場面${si + 1}「${ch.beats[si]}」を、約${target}字で執筆してください。
 - 直前の本文から自然につなげる。同じ内容を繰り返さない。
 - この場面の範囲だけを書く。次の場面以降の出来事を先取りしない。
 ${
-  lastScene
-    ? "- これが物語の最終場面です。全ての伏線を回収し、余韻のある結末で物語を締めくくる。"
-    : `- 物語を勝手に終わらせない。この場面は${next && si === ch.beats.length - 1 ? `次の章(${next.title})` : "次の場面"}へ続く途中経過である。`
+  serial
+    ? `- この場面は、連載の1回分として単独で投稿される。読者を引きつける見せ場を入れ、${
+        lastScene
+          ? serial.index + 1 === serial.total
+            ? "これが連載の最終回です。全ての伏線を回収し、余韻のある結末で物語全体を締めくくる。"
+            : "これはこの話の最後の回です。この話の出来事に区切りをつけ、次の話が気になる引きで終える。物語全体はまだ終わらせない。"
+          : "最後は次の回が読みたくなる引きで終える。物語を勝手に終わらせない。"
+      }`
+    : lastScene
+      ? "- これが物語の最終場面です。全ての伏線を回収し、余韻のある結末で物語を締めくくる。"
+      : `- 物語を勝手に終わらせない。この場面は${next && si === ch.beats.length - 1 ? `次の章(${next.title})` : "次の場面"}へ続く途中経過である。`
 }
 - 描写・心理・会話を丁寧に書き込み、あっさり要約せず、場面として具体的に描く。
 ${acquisitionNotes(story, ci, si)}${
@@ -588,6 +622,66 @@ ${lines.length ? `\n【必ず入れるセリフ】\n${linesText(lines)}\n` : ""}
 ${scene}
 
 書き直した場面の本文のみを出力してください。`,
+    },
+  ];
+}
+
+/** カクヨム連載:場面(=連載1回分)ごとのサブタイトルを考える */
+export function subtitlesPrompt(story: Story): ChatMessage[] {
+  const ch = story.chapters[0];
+  const n = story.shared?.serial ? `第${story.shared.serial.index + 1}話` : "この話";
+  return [
+    { role: "system", content: `${EDITOR}Web連載小説の各回のサブタイトルを考えます。出力はJSONのみ。` },
+    {
+      role: "user",
+      content: `連載小説の${n}「${story.title}」は、次の${ch.beats.length}回に分けて投稿します。各回のサブタイトルを考えてください。
+
+【この話のあらすじ】
+${story.synopsis}
+
+【各回の内容】
+${ch.beats.map((b, i) => `${i + 1}回目:${b}`).join("\n")}
+
+【条件】
+- titles に、${ch.beats.length}個のサブタイトルを順番に入れる(要素数は必ず${ch.beats.length})。
+- 各回の内容が伝わり、読みたくなる、Web小説らしいサブタイトルにする。1つ20字以内。
+- 結末やどんでん返しをそのまま書いてネタバレしない。
+- 「第1回」などの番号や、かぎ括弧は付けない。`,
+    },
+  ];
+}
+
+/** カクヨム連載:キャッチコピー・紹介文・タグを考える */
+export function kakuyomuPrompt(opts: {
+  title: string;
+  genre: string;
+  world: string;
+  keywords: string[];
+  cast: string[];
+  episodes: { title: string; synopsis: string }[];
+  catchcopyMax: number;
+  tagsMax: number;
+}): ChatMessage[] {
+  return [
+    {
+      role: "system",
+      content: `${EDITOR}小説投稿サイト「カクヨム」に連載する作品の、キャッチコピー・紹介文・タグを考えます。出力はJSONのみ。`,
+    },
+    {
+      role: "user",
+      content: `次の連載作品の、カクヨム掲載用の情報を考えてください。
+
+作品名:${opts.title || "(未定)"}
+ジャンル:${opts.genre || "(未定)"}
+キーワード:${opts.keywords.join("、") || "(なし)"}
+${opts.world.trim() ? `世界観:${opts.world.trim()}\n` : ""}${opts.cast.length ? `主な登場人物:${opts.cast.join("、")}\n` : ""}
+【各話の内容】
+${opts.episodes.length ? opts.episodes.map((e, i) => `第${i + 1}話「${e.title}」:${e.synopsis}`).join("\n") : "(まだ決まっていません。上の情報から考えてください)"}
+
+【条件】
+- catchcopy:作品の魅力が一目で伝わるキャッチコピー。必ず${opts.catchcopyMax}字以内(空白・記号も1字と数える)。
+- introduction:作品の紹介文。300〜600字。主人公と状況、物語の目的や謎、読みどころを伝え、続きを読みたくなるようにする。結末は書かない。段落は改行で区切る。
+- tags:作品のタグ。${opts.tagsMax}個以内。ジャンル・題材・雰囲気・主人公の属性など、読者が検索しそうな短い言葉にする。1つのタグに空白や「#」を含めない。`,
     },
   ];
 }

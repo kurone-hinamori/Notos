@@ -23,14 +23,16 @@ function NumberInput(props: { label: string; value: number; min: number; max: nu
   );
 }
 
-export function NewAnthology(props: { settings: Settings; onCreate: (a: Anthology) => Promise<void> }) {
+export function NewAnthology(props: { settings: Settings; serial?: boolean; onCreate: (a: Anthology) => Promise<void> }) {
+  // カクヨム連載:連作短編として作り、1話=4回分、1回分は約2,250字(2,000〜2,500字)
+  const serial = !!props.serial;
   const [title, setTitle] = useState("");
   const [keywords, setKeywords] = useState("");
   const [note, setNote] = useState("");
   const [genre, setGenre] = useState("");
   const [episodes, setEpisodes] = useState(12);
   const [scenes, setScenes] = useState(4);
-  const [chars, setChars] = useState(2000);
+  const [chars, setChars] = useState(serial ? 2250 : 2000);
   const [mode, setMode] = useState<AnthologyMode>("series");
   const [world, setWorld] = useState("");
   const [cast, setCast] = useState<SharedCharacter[]>([]);
@@ -41,34 +43,42 @@ export function NewAnthology(props: { settings: Settings; onCreate: (a: Antholog
   const create = () =>
     void props.onCreate(
       createAnthology({
-        title: title.trim() || "無題の短編集",
+        title: title.trim() || (serial ? "無題の連載" : "無題の短編集"),
         keywords: kwList,
         note,
         author: props.settings.author,
         episodes,
         scenes,
         charsPerScene: chars,
-        mode,
         world,
         cast,
         shared,
         genre: genre.trim(),
+        format: serial ? "kakuyomu" : "anthology",
+        mode: serial ? "series" : mode,
       }),
     );
 
   return (
     <div className="page narrow">
       <header className="page-head">
-        <h2>新しい短編集</h2>
+        <h2>{serial ? "新しい連載(カクヨム)" : "新しい短編集"}</h2>
       </header>
       <div className="stack">
-        <p className="muted">
+        {serial && (
+          <p className="muted">
+            カクヨムに連載する作品を作ります。連載の名前の下に話(カクヨムの「章」)が並び、各話は4回分(カクヨムの「エピソード」)に分けて投稿します。
+            1回分は約2,000〜2,500字で、それぞれにサブタイトルを付けます。12話で文庫本1冊分(約10万字)になります。
+            キャッチコピー・紹介文・タグは、作成後に「連載の情報」タブで自動で作ったり編集したりできます。
+          </p>
+        )}
+        <p className="muted" hidden={serial}>
           1話完結の短編をまとめた本を作ります。各話の概要(タイトル・あらすじ・登場人物)は、ガチャで1話ずつ決めることも、
           「おまかせ」で前の話が書き上がるたびに自動で作らせることもできます。
           各話の執筆ではその話の設定資料と共通の設定だけを参照するので、話数が多くても内容が欠けにくくなります。
         </p>
-        <Section title="短編集の情報">
-          <Field label="短編集のタイトル(あとで変更できます)" value={title} placeholder="無題の短編集" onChange={setTitle} />
+        <Section title={serial ? "連載の情報" : "短編集の情報"}>
+          <Field label={serial ? "連載の名前(作品名。あとで変更できます)" : "短編集のタイトル(あとで変更できます)"} value={title} placeholder="無題の短編集" onChange={setTitle} />
           <Field
             label="ジャンル(全話共通。空欄の場合は、話ごとにガチャで決まります)"
             value={genre}
@@ -89,8 +99,8 @@ export function NewAnthology(props: { settings: Settings; onCreate: (a: Antholog
             onChange={setNote}
           />
         </Section>
-        <Section title="短編集の種類">
-          <ModeSelect mode={mode} onChange={setMode} />
+        <Section title={serial ? "世界観" : "短編集の種類"}>
+          {!serial && <ModeSelect mode={mode} onChange={setMode} />}
           <Field
             label="共通の世界観・舞台(任意。全話に適用されます)"
             rows={3}
@@ -125,8 +135,8 @@ export function NewAnthology(props: { settings: Settings; onCreate: (a: Antholog
         <Section title="規模">
           <div className="three-col">
             <NumberInput label="話数" value={episodes} min={1} max={30} onChange={setEpisodes} />
-            <NumberInput label="1話あたりの場面数" value={scenes} min={2} max={8} onChange={setScenes} />
-            <NumberInput label="1場面の文字数(目安)" value={chars} min={600} max={4000} step={100} onChange={setChars} />
+            <NumberInput label={serial ? "1話あたりの連載回数" : "1話あたりの場面数"} value={scenes} min={2} max={8} onChange={setScenes} />
+            <NumberInput label={serial ? "1回分の文字数(目安)" : "1場面の文字数(目安)"} value={chars} min={600} max={4000} step={100} onChange={setChars} />
           </div>
           <p className="muted">
             1話あたり約 {perEpisode.toLocaleString()} 字 × {episodes} 話 = 約 {(perEpisode * episodes).toLocaleString()} 字(文庫本1冊は約8〜10万字)。
@@ -135,7 +145,7 @@ export function NewAnthology(props: { settings: Settings; onCreate: (a: Antholog
         </Section>
         <div className="row">
           <button className="primary big" onClick={create}>
-            短編集を作成する →
+            {serial ? "連載を作成する →" : "短編集を作成する →"}
           </button>
         </div>
       </div>

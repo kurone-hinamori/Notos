@@ -57,6 +57,8 @@ export function createAnthology(opts: {
   cast: SharedCharacter[];
   shared: Partial<Record<EntryKind, SharedEntry[]>>;
   genre: string;
+  /** kakuyomu: カクヨム連載として作る */
+  format?: "anthology" | "kakuyomu";
 }): Anthology {
   const now = new Date().toISOString();
   const base = { keywords: opts.keywords, note: opts.note, author: opts.author, plan: { scenes: opts.scenes, charsPerScene: opts.charsPerScene } };
@@ -75,6 +77,8 @@ export function createAnthology(opts: {
     shared: opts.shared,
     autoConcept: true,
     stopOnIssues: false,
+    format: opts.format ?? "anthology",
+    ...(opts.format === "kakuyomu" ? { kakuyomu: { catchcopy: "", introduction: "", tags: [] } } : {}),
     episodes: Array.from({ length: opts.episodes }, () => createEpisode(base)),
   };
 }

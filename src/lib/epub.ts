@@ -1,5 +1,6 @@
 import JSZip from "jszip";
 import type { Anthology, Bible, Story } from "../types";
+import { postsOf } from "./anthology";
 
 /** EPUB にする本の中身(長編・短編集の共通形式) */
 export interface Book {
@@ -31,7 +32,7 @@ function paragraphs(body: string): string {
       continue;
     }
     blank = false;
-    const noIndent = /^[「『（(【〈《“]/.test(line);
+    const noIndent = /^[「『（(【〈《“◇]/.test(line);
     out.push(`<p${noIndent ? ' class="nd"' : ""}>${inline(line.trim())}</p>`);
   }
   return out.join("\n");
@@ -162,7 +163,13 @@ export function anthologyBook(a: Anthology, author: string, includeBible: boolea
     synopsis: eps.map(({ e, n }) => `第${n}話 ${e.title}`).join(" / "),
     chapters: eps.map(({ e, n }) => ({
       heading: `第${n}話　${e.title}`,
-      body: e.chapters.map((c) => c.body).filter(Boolean).join("\n\n"),
+      // カクヨム連載は、各回のサブタイトルを見出しとして入れる
+      body:
+        a.format === "kakuyomu"
+          ? postsOf(e)
+              .map((p, i) => `◇${p.title || `${i + 1}`}\n${p.body}`)
+              .join("\n\n")
+          : e.chapters.map((c) => c.body).filter(Boolean).join("\n\n"),
     })),
     appendix: includeBible
       ? eps.flatMap(({ e, n }) =>

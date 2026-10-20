@@ -57,6 +57,7 @@ fn summarize(story: &Value) -> Value {
             .count();
         return json!({
             "kind": "anthology",
+            "format": story["format"].as_str().unwrap_or("anthology"),
             "id": story["id"],
             "title": story["title"],
             "tagline": "",

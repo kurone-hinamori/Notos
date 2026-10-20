@@ -75,6 +75,8 @@ export interface Chapter {
   lines?: { text: string; scene: number }[];
   /** この章の途中で手に入れる共通の品物と、手に入れる場面(0始まり) */
   acquire?: { name: string; scene: number }[];
+  /** カクヨム連載:場面(=連載1回分)ごとのサブタイトル */
+  sceneTitles?: string[];
 }
 
 export type StoryStatus = "concept" | "producing" | "done";
@@ -164,7 +166,32 @@ export interface SharedContext {
   avoidNames: string[];
   /** 連作短編の場合、これまでの話の流れ */
   previous: string;
+  /** カクヨム連載の場合、この話の位置と1回分の長さ */
+  serial?: {
+    index: number;
+    total: number;
+    scenes: number;
+    chars: number;
+    /** 前の話の本文の末尾(この話の書き出しを自然につなげるため) */
+    prevTail?: string;
+  };
 }
+
+/** カクヨムに掲載するための情報 */
+export interface KakuyomuInfo {
+  /** キャッチコピー(35文字まで) */
+  catchcopy: string;
+  /** 紹介文 */
+  introduction: string;
+  /** タグ(8個まで) */
+  tags: string[];
+}
+
+export const KAKUYOMU_CATCHCOPY_MAX = 35;
+export const KAKUYOMU_TAGS_MAX = 8;
+/** 連載1回分の文字数の目安 */
+export const KAKUYOMU_POST_MIN = 2000;
+export const KAKUYOMU_POST_MAX = 2500;
 
 export type AnthologyMode = "series" | "omnibus";
 
@@ -197,6 +224,10 @@ export interface Anthology {
   autoConcept?: boolean;
   /** まとめて生成で、「要確認」が残った話があれば次の話へ進まずに止まる。未設定は false */
   stopOnIssues?: boolean;
+  /** kakuyomu: カクヨム連載(連作短編をもとに、話=章、場面=連載1回分として扱う)。未設定は短編集 */
+  format?: "anthology" | "kakuyomu";
+  /** カクヨム連載の掲載情報 */
+  kakuyomu?: KakuyomuInfo;
 }
 
 export type Doc = Story | Anthology;
@@ -208,6 +239,8 @@ export function isAnthology(d: Doc | null | undefined): d is Anthology {
 export interface StorySummary {
   /** 以前のバージョンの一覧データでは欠けていることがある */
   kind?: "novel" | "anthology";
+  /** 短編集の場合の形式(kakuyomu: カクヨム連載) */
+  format?: "anthology" | "kakuyomu";
   /** 短編集の場合、完成した話の数 */
   doneCount: number;
   id: string;

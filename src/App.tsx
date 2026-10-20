@@ -20,7 +20,10 @@ type View =
   | { name: "detail"; id: string; tab?: string }
   | { name: "anthologies" }
   | { name: "anthology-new" }
-  | { name: "anthology"; id: string };
+  | { name: "anthology"; id: string }
+  | { name: "serials" }
+  | { name: "serial-new" }
+  | { name: "serial"; id: string };
 
 export default function App() {
   const [settings, setSettings] = useState<Settings>(loadSettings);
@@ -52,11 +55,11 @@ export default function App() {
     }
   };
 
-  const openAnthology = async (id: string) => {
+  const openAnthology = async (id: string, serial = false) => {
     setLoadError("");
     try {
       await mgr.open(id);
-      setView({ name: "anthology", id });
+      setView(serial ? { name: "serial", id } : { name: "anthology", id });
     } catch (e) {
       setLoadError(`物語を開けませんでした:${e instanceof Error ? e.message : String(e)}`);
     }
@@ -96,12 +99,12 @@ export default function App() {
 
   const createAnthology = async (a: Anthology) => {
     await mgr.adopt(a);
-    setView({ name: "anthology", id: a.id });
+    setView(a.format === "kakuyomu" ? { name: "serial", id: a.id } : { name: "anthology", id: a.id });
   };
 
   /** 生成中のドキュメントを開く(サイドバーの「進捗を見る」) */
   const showRunning = () => {
-    if (mgr.anthology) void openAnthology(mgr.anthology.id);
+    if (mgr.anthology) void openAnthology(mgr.anthology.id, mgr.anthology.format === "kakuyomu");
     else if (mgr.story) void openStory(mgr.story.id, "production");
   };
 
@@ -132,6 +135,13 @@ export default function App() {
           <button className={view.name === "anthology-new" ? "active" : ""} onClick={() => void go({ name: "anthology-new" })}>
             ✨ 新しい短編集
           </button>
+          <small className="nav-label">カクヨム連載</small>
+          <button className={view.name === "serials" || view.name === "serial" ? "active" : ""} onClick={() => void go({ name: "serials" })}>
+            📝 連載の一覧
+          </button>
+          <button className={view.name === "serial-new" ? "active" : ""} onClick={() => void go({ name: "serial-new" })}>
+            ✨ 新しい連載
+          </button>
           <small className="nav-label" />
           <button className={view.name === "settings" ? "active" : ""} onClick={() => void go({ name: "settings" })}>
             ⚙ 設定
@@ -141,7 +151,7 @@ export default function App() {
           <div className="side-run">
             <div className="running">● 生成中</div>
             <small>{mgr.run.stage}</small>
-            {view.name !== "detail" && view.name !== "anthology" && mgr.doc && (
+            {view.name !== "detail" && view.name !== "anthology" && view.name !== "serial" && mgr.doc && (
               <button className="small" onClick={showRunning}>
                 進捗を見る
               </button>
@@ -162,10 +172,14 @@ export default function App() {
         )}
         {loadError && <p className="error">{loadError}</p>}
         {view.name === "anthologies" && (
-          <StoryList key="anthology" kind="anthology" onOpen={(id) => void openAnthology(id)} onNew={() => void go({ name: "anthology-new" })} />
+          <StoryList onDelete={mgr.remove} key="anthology" kind="anthology" onOpen={(id) => void openAnthology(id)} onNew={() => void go({ name: "anthology-new" })} />
         )}
         {view.name === "anthology-new" && <NewAnthology settings={settings} onCreate={createAnthology} />}
-        {view.name === "anthology" && mgr.anthology && mgr.anthology.id === view.id && (
+        {view.name === "serials" && (
+          <StoryList onDelete={mgr.remove} key="serial" kind="serial" onOpen={(id) => void openAnthology(id, true)} onNew={() => void go({ name: "serial-new" })} />
+        )}
+        {view.name === "serial-new" && <NewAnthology key="serial" serial settings={settings} onCreate={createAnthology} />}
+        {(view.name === "anthology" || view.name === "serial") && mgr.anthology && mgr.anthology.id === view.id && (
           <AnthologyDetail
             key={mgr.anthology.id}
             anthology={mgr.anthology}
@@ -175,10 +189,10 @@ export default function App() {
             start={(t, episode) => void mgr.start(t, episode)}
             execute={(jobs) => void mgr.execute(jobs)}
             stop={mgr.stop}
-            onBack={() => void go({ name: "anthologies" })}
+            onBack={() => void go({ name: view.name === "serial" ? "serials" : "anthologies" })}
           />
         )}
-        {view.name === "list" && <StoryList key="novel" kind="novel" onOpen={(id, tab) => void openStory(id, tab)} onDuplicate={(id) => void duplicate(id)} onNew={() => void go({ name: "new" })} />}
+        {view.name === "list" && <StoryList onDelete={mgr.remove} key="novel" kind="novel" onOpen={(id, tab) => void openStory(id, tab)} onDuplicate={(id) => void duplicate(id)} onNew={() => void go({ name: "new" })} />}
         {view.name === "new" && <NewStory key={view.seed?.title ?? "blank"} settings={settings} seed={view.seed} onCreate={create} />}
         {view.name === "settings" && <SettingsView settings={settings} generating={mgr.run.running} onChange={setSettings} />}
         {view.name === "detail" && mgr.story && mgr.story.id === view.id && (

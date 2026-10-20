@@ -1,5 +1,5 @@
-import type { Bible, BookPlan, Chapter, CharacterSheet, Concept, Entry, EntryKind, Issue, Settings, SharedContext, Story } from "../types";
-import { emptyBible } from "../types";
+import type { Bible, BookPlan, Chapter, CharacterSheet, Concept, Entry, EntryKind, Issue, KakuyomuInfo, Settings, SharedContext, Story } from "../types";
+import { emptyBible, KAKUYOMU_CATCHCOPY_MAX, KAKUYOMU_POST_MIN, KAKUYOMU_TAGS_MAX } from "../types";
 import { chat, chatJson } from "./ollama";
 import {
   biblePrompt,
@@ -15,6 +15,8 @@ import {
   castChangesPrompt,
   entriesPrompt,
   insertLinePrompt,
+  kakuyomuPrompt,
+  subtitlesPrompt,
   type ConceptRequest,
 } from "./prompts";
 import {
@@ -27,6 +29,8 @@ import {
   castSchema,
   castChangesSchema,
   entriesSchema,
+  kakuyomuSchema,
+  subtitlesSchema,
 } from "./schemas";
 import { cleanProse, countChars, hasLine, joinScenes, lineCore, linePos, sameName, splitChunks, tail } from "./text";
 
@@ -45,6 +49,7 @@ export type Task =
   | { kind: "all" }
   | { kind: "bible" }
   | { kind: "outline" }
+  | { kind: "subtitles" }
   | { kind: "chapter"; index: number }
   | { kind: "proofread"; index: number | "all" };
 
@@ -223,6 +228,8 @@ async function stepOutline(ctx: Ctx) {
     for (const x of c.acquire ?? []) ctx.log(`「${x.name}」は場面${x.scene + 1}で手に入れます`);
   }
   ctx.log(`全${chapters.length}章の構成を作成しました`);
+  // カクヨム連載では、場面(=連載1回分)ごとにサブタイトルを付ける
+  if (ctx.get().shared?.serial) await stepSubtitles(ctx);
 }
 
 /** ci 章 si 場面より後の場面で使うと決めたセリフ */
@@ -326,6 +333,50 @@ export function assignLines(s: Story) {
   });
 }
 
+/** カクヨム連載:場面(=連載1回分)ごとのサブタイトルを作る */
+async function stepSubtitles(ctx: Ctx) {
+  const ch = ctx.get().chapters[0];
+  if (!ch) return;
+  ctx.stage("各回のサブタイトルを作成中");
+  const r = await chatJson<{ titles: string[] }>(ctx.settings, {
+    messages: subtitlesPrompt(ctx.get()),
+    schema: subtitlesSchema,
+    signal: ctx.signal,
+    numPredict: 1024,
+  });
+  const titles = (r.titles ?? []).map((x) => x.replace(/^[「『]|[」』]$/g, "").trim());
+  ctx.update((s) => {
+    const c = s.chapters[0];
+    c.sceneTitles = c.beats.map((_, i) => titles[i] || c.sceneTitles?.[i] || `${i + 1}`);
+  });
+  ctx.log(`サブタイトルを作成しました:${ctx.get().chapters[0].sceneTitles!.join(" / ")}`);
+}
+
+/** カクヨム連載:キャッチコピー・紹介文・タグを考える(上限を超えたら作り直し、それでも超えたら切り詰める) */
+export async function generateKakuyomuInfo(
+  settings: Settings,
+  opts: Omit<Parameters<typeof kakuyomuPrompt>[0], "catchcopyMax" | "tagsMax">,
+  signal?: AbortSignal,
+): Promise<KakuyomuInfo> {
+  let last: KakuyomuInfo | null = null;
+  for (let attempt = 0; attempt < 3; attempt++) {
+    const r = await chatJson<KakuyomuInfo>(settings, {
+      messages: kakuyomuPrompt({ ...opts, catchcopyMax: KAKUYOMU_CATCHCOPY_MAX, tagsMax: KAKUYOMU_TAGS_MAX }),
+      schema: kakuyomuSchema,
+      temperature: Math.min(1.1, settings.temperature + 0.1),
+      signal,
+    });
+    const tags = [...new Set((r.tags ?? []).map((t) => t.replace(/[#＃\s　]/g, "")).filter(Boolean))];
+    last = { catchcopy: (r.catchcopy ?? "").trim(), introduction: (r.introduction ?? "").trim(), tags };
+    if ([...last.catchcopy].length <= KAKUYOMU_CATCHCOPY_MAX && last.tags.length <= KAKUYOMU_TAGS_MAX) return last;
+  }
+  return {
+    catchcopy: [...last!.catchcopy].slice(0, KAKUYOMU_CATCHCOPY_MAX).join(""),
+    introduction: last!.introduction,
+    tags: last!.tags.slice(0, KAKUYOMU_TAGS_MAX),
+  };
+}
+
 // ---------------------------------------------------------------- 本文
 
 /** 直前の本文(章をまたいでもよい)の末尾を返す。 */
@@ -344,8 +395,10 @@ async function writeScene(ctx: Ctx, ci: number, si: number) {
   const lines = (ctx.get().chapters[ci].lines ?? []).filter((l) => l.scene === si).map((l) => l.text);
   const later = laterLines(ctx.get(), ci, si);
   let scene = "";
-  // 目標の約7割に満たない場合は最大2回まで書き足す
-  for (let pass = 0; pass < 3; pass++) {
+  // 目標の約7割に満たない場合は書き足す。カクヨム連載では、1回分が最低文字数に届くまで書き足す
+  const serial = !!ctx.get().shared?.serial;
+  const enough = serial ? Math.min(KAKUYOMU_POST_MIN, target) : target * 0.7;
+  for (let pass = 0; pass < (serial ? 4 : 3); pass++) {
     throwIfAborted(ctx);
     const story = ctx.get();
     const raw = await chat(settings, {
@@ -367,7 +420,7 @@ async function writeScene(ctx: Ctx, ci: number, si: number) {
     const text = cleanProse(raw);
     if (!text) continue;
     scene = scene ? `${scene}\n${text}` : text;
-    if (countChars(scene) >= target * 0.7) break;
+    if (countChars(scene) >= enough) break;
   }
   if (!scene) throw new Error("本文を生成できませんでした");
 
@@ -632,6 +685,9 @@ export async function runTask(ctx: Ctx, task: Task): Promise<void> {
   switch (task.kind) {
     case "bible":
       await stepBible(ctx);
+      return;
+    case "subtitles":
+      await stepSubtitles(ctx);
       return;
     case "outline":
       await stepOutline(ctx);

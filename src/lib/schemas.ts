@@ -80,3 +80,9 @@ export const castChangesSchema = obj({
 export const entriesSchema = obj({
   entries: arr(entry),
 });
+
+/** カクヨム連載:各回のサブタイトル */
+export const subtitlesSchema = obj({ titles: arr(str) });
+
+/** カクヨム連載:キャッチコピー・紹介文・タグ */
+export const kakuyomuSchema = obj({ catchcopy: str, introduction: str, tags: arr(str) });
