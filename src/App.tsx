@@ -3,6 +3,12 @@ import { getVersion } from "@tauri-apps/api/app";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import type { Anthology, Settings, Story } from "./types";
 import { isAnthology } from "./types";
+import { duplicateAnthology as duplicateAnthologyDoc } from "./lib/anthology";
+
+const DUPLICATE_QUESTION =
+  "各話の概要(タイトル・あらすじ・登場人物)も引き継ぎますか?\n\n" +
+  "[OK] 引き継ぐ(設定資料・本文は作り直します)\n" +
+  "[キャンセル] 引き継がない(各話の仕込みだけ残して、ガチャ・おまかせからやり直します)";
 import { loadSettings, loadStory, persistSettings } from "./lib/storage";
 import { useStoryManager } from "./hooks";
 import { StoryList } from "./components/StoryList";
@@ -91,6 +97,25 @@ export default function App() {
     }
   };
 
+  /**
+   * 短編集・カクヨム連載を複製して、複製したものを開く。元の作品は変更しない。
+   * 設定は引き継ぎ、設定資料・本文は引き継がない。各話のあらすじを引き継ぐかは選べる。
+   */
+  const duplicateAnthology = async (id: string) => {
+    setLoadError("");
+    try {
+      await mgr.flush();
+      const a = await loadStory(id);
+      if (!isAnthology(a)) return;
+      const withConcepts = window.confirm(DUPLICATE_QUESTION);
+      const copy = duplicateAnthologyDoc(a, withConcepts);
+      await mgr.adopt(copy);
+      setView(copy.format === "kakuyomu" ? { name: "serial", id: copy.id } : { name: "anthology", id: copy.id });
+    } catch (e) {
+      setLoadError(`複製できませんでした:${e instanceof Error ? e.message : String(e)}`);
+    }
+  };
+
   const create = async (s: Story) => {
     await mgr.adopt(s);
     setView({ name: "detail", id: s.id, tab: "production" });
@@ -172,11 +197,11 @@ export default function App() {
         )}
         {loadError && <p className="error">{loadError}</p>}
         {view.name === "anthologies" && (
-          <StoryList onDelete={mgr.remove} key="anthology" kind="anthology" onOpen={(id) => void openAnthology(id)} onNew={() => void go({ name: "anthology-new" })} />
+          <StoryList onDelete={mgr.remove} onDuplicate={(id) => void duplicateAnthology(id)} key="anthology" kind="anthology" onOpen={(id) => void openAnthology(id)} onNew={() => void go({ name: "anthology-new" })} />
         )}
         {view.name === "anthology-new" && <NewAnthology settings={settings} onCreate={createAnthology} />}
         {view.name === "serials" && (
-          <StoryList onDelete={mgr.remove} key="serial" kind="serial" onOpen={(id) => void openAnthology(id, true)} onNew={() => void go({ name: "serial-new" })} />
+          <StoryList onDelete={mgr.remove} onDuplicate={(id) => void duplicateAnthology(id)} key="serial" kind="serial" onOpen={(id) => void openAnthology(id, true)} onNew={() => void go({ name: "serial-new" })} />
         )}
         {view.name === "serial-new" && <NewAnthology key="serial" serial settings={settings} onCreate={createAnthology} />}
         {(view.name === "anthology" || view.name === "serial") && mgr.anthology && mgr.anthology.id === view.id && (
@@ -190,6 +215,7 @@ export default function App() {
             execute={(jobs) => void mgr.execute(jobs)}
             stop={mgr.stop}
             onBack={() => void go({ name: view.name === "serial" ? "serials" : "anthologies" })}
+            onDuplicate={() => void duplicateAnthology(mgr.anthology!.id)}
           />
         )}
         {view.name === "list" && <StoryList onDelete={mgr.remove} key="novel" kind="novel" onOpen={(id, tab) => void openStory(id, tab)} onDuplicate={(id) => void duplicate(id)} onNew={() => void go({ name: "new" })} />}

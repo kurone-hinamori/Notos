@@ -120,7 +120,11 @@ export function StoryList(props: {
                 {props.onDuplicate && (
                   <button
                     className="small"
-                    title="キーワードを修正して、ガチャからやり直す(元の物語は残ります)"
+                    title={
+                      anthology
+                        ? "設定(共通の登場人物・場所・品物、各話の仕込みなど)を引き継いで、新しく作り直します(元の作品は残ります)"
+                        : "キーワードを修正して、ガチャからやり直す(元の物語は残ります)"
+                    }
                     onClick={(e) => {
                       e.stopPropagation();
                       props.onDuplicate?.(s.id);

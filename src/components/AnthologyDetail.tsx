@@ -95,6 +95,7 @@ export function AnthologyDetail(props: {
   execute: (jobs: Job[]) => void;
   stop: () => void;
   onBack: () => void;
+  onDuplicate: () => void;
 }) {
   const { anthology: a, run, mutate } = props;
   const serial = isKakuyomu(a);
@@ -226,7 +227,16 @@ export function AnthologyDetail(props: {
             {totalChars.toLocaleString()}字
           </span>
         </div>
-        {runningHere && <span className="running">● 生成中:{run.stage}</span>}
+        <div className="row">
+          {runningHere && <span className="running">● 生成中:{run.stage}</span>}
+          <button
+            disabled={runningHere}
+            title="設定(共通の登場人物・場所・品物、掲載情報、各話の仕込みなど)を引き継いで、新しく作り直します。元の作品は残ります。"
+            onClick={props.onDuplicate}
+          >
+            複製して作り直す
+          </button>
+        </div>
       </header>
 
       <nav className="tabs">

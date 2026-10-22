@@ -188,3 +188,41 @@ export function clearHistory(a: Anthology, episodeIds: string[]) {
 export function hasOpenIssues(e: Story): boolean {
   return e.chapters.some((c) => c.issues.some((it) => !it.applied && !it.state));
 }
+
+/**
+ * 短編集・カクヨム連載を複製する。設定(共通の登場人物・場所・品物・用語、掲載情報、各話の仕込み)は引き継ぎ、
+ * 生成した設定資料・構成・本文と、話ごとの経緯は引き継がない。
+ * withConcepts が true なら、各話の概要(タイトル・あらすじ・登場人物)も引き継ぐ。
+ */
+export function duplicateAnthology(a: Anthology, withConcepts: boolean): Anthology {
+  const now = new Date().toISOString();
+  const castId = new Map((a.cast ?? []).map((c) => [c.id, newId()]));
+  const episodeId = new Map(a.episodes.map((e) => [e.id, newId()]));
+  const copy = structuredClone(a);
+  copy.id = newId();
+  copy.createdAt = now;
+  copy.updatedAt = now;
+  copy.title = `${a.title}(複製)`;
+  copy.cast = (copy.cast ?? []).map((c) => ({ ...c, id: castId.get(c.id) ?? newId(), history: [] }));
+  for (const kind of ENTRY_KINDS) {
+    if (!copy.shared?.[kind]) continue;
+    copy.shared[kind] = copy.shared[kind]!.map((e) => ({
+      ...e,
+      id: newId(),
+      history: [],
+      fromEpisodeId: e.fromEpisodeId ? episodeId.get(e.fromEpisodeId) : undefined,
+    }));
+  }
+  copy.episodes = copy.episodes.map((e) => {
+    const x: Story = {
+      ...e,
+      id: episodeId.get(e.id) ?? newId(),
+      createdAt: now,
+      updatedAt: now,
+      castIds: (e.castIds ?? []).map((id) => castId.get(id)).filter((id): id is string => !!id),
+    };
+    resetEpisode(x, !withConcepts);
+    return x;
+  });
+  return copy;
+}
