@@ -32,7 +32,8 @@ import {
   kakuyomuSchema,
   subtitlesSchema,
 } from "./schemas";
-import { cleanProse, countChars, hasLine, joinScenes, lineCore, linePos, sameName, splitChunks, tail } from "./text";
+import { normalizeNumbers } from "./numbers";
+import { cleanProse, countChars, decodeByteTokens, hasLine, joinScenes, lineCore, linePos, sameName, splitChunks, tail } from "./text";
 
 /** パイプラインが物語を読み書きするための窓口(UI 側が保存を担当する)。 */
 export interface Ctx {
@@ -50,6 +51,7 @@ export type Task =
   | { kind: "bible" }
   | { kind: "outline" }
   | { kind: "subtitles" }
+  | { kind: "numbers"; index: number | "all" }
   | { kind: "chapter"; index: number }
   | { kind: "proofread"; index: number | "all" };
 
@@ -664,11 +666,31 @@ async function stepProofread(ctx: Ctx, ci: number) {
   const ch = ctx.get().chapters[ci];
   if (!ch.body) return;
   const changed = await proofreadBody(ctx, ci);
+  unifyNumbers(ctx, ci);
   await checkConsistency(ctx, ci);
   ctx.update((s) => {
     s.chapters[ci].proofread = true;
   });
   ctx.log(`第${ci + 1}章を校閲しました(修正:${changed}箇所)`);
+}
+
+/**
+ * 数字の表記(漢数字/算用数字)を設定に合わせて統一する。規則による変換なので LLM は使わない。
+ * 使ってほしいセリフの中の数字は変えない。
+ */
+function unifyNumbers(ctx: Ctx, ci: number): number {
+  const style = ctx.settings.numberStyle ?? "kanji";
+  // あわせて、モデルがバイトのまま出力した文字(<0xE3><0x80><0x80> など)を本来の文字に戻す
+  const bytes = decodeByteTokens(ctx.get().chapters[ci].body);
+  const protect = (ctx.get().lines ?? []).map(lineCore);
+  const r = normalizeNumbers(bytes.text, style, protect);
+  if (!r.count && !bytes.count) return 0;
+  ctx.update((s) => {
+    s.chapters[ci].body = r.text;
+  });
+  if (bytes.count) ctx.log(`第${ci + 1}章:文字化けしていた文字を${bytes.count}箇所直しました`);
+  if (r.count) ctx.log(`第${ci + 1}章:数字の表記を${style === "kanji" ? "漢数字" : "算用数字"}に統一しました(${r.count}箇所)`);
+  return r.count + bytes.count;
 }
 
 // ---------------------------------------------------------------- 実行
@@ -686,6 +708,13 @@ export async function runTask(ctx: Ctx, task: Task): Promise<void> {
     case "bible":
       await stepBible(ctx);
       return;
+    case "numbers": {
+      const indices = task.index === "all" ? ctx.get().chapters.map((_, i) => i) : [task.index];
+      let total = 0;
+      for (const i of indices) total += unifyNumbers(ctx, i);
+      if (!total) ctx.log("数字の表記は統一されていました");
+      return;
+    }
     case "subtitles":
       await stepSubtitles(ctx);
       return;

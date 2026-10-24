@@ -136,6 +136,13 @@ export function ProductionTab(props: {
           <button disabled={locked || written === 0} onClick={() => props.start({ kind: "proofread", index: "all" })}>
             全章を校閲し直す
           </button>
+          <button
+            disabled={locked || written === 0}
+            title="漢数字と算用数字の混在を、設定画面の「数字の表記」に合わせて統一します(すぐ終わります)"
+            onClick={() => props.start({ kind: "numbers", index: "all" })}
+          >
+            全章の数字を統一
+          </button>
         </div>
         <p className="muted small-text">章ごとの再生成・校閲は「本文」タブから行えます。</p>
       </Section>

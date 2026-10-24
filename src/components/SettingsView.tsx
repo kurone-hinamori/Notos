@@ -5,6 +5,7 @@ import type { Settings } from "../types";
 import { listModels } from "../lib/ollama";
 import { installUpdate } from "../lib/updater";
 import { Field } from "./ui";
+import { NUMBER_STYLE_LABEL, type NumberStyle } from "../lib/numbers";
 
 export function SettingsView(props: { settings: Settings; generating: boolean; onChange: (s: Settings) => void }) {
   const { settings, onChange } = props;
@@ -95,6 +96,27 @@ export function SettingsView(props: { settings: Settings; generating: boolean; o
           </select>
           <small className="muted">大きいほど設定資料や前章の要約を多く参照できますが、メモリを消費します。</small>
         </label>
+      </section>
+      <section className="card">
+        <h3>校閲</h3>
+        <label className="field">
+          <span>数字の表記</span>
+          <select
+            value={settings.numberStyle ?? "kanji"}
+            onChange={(e) => onChange({ ...settings, numberStyle: e.target.value as NumberStyle })}
+          >
+            {(Object.keys(NUMBER_STYLE_LABEL) as NumberStyle[]).map((k) => (
+              <option key={k} value={k}>
+                {NUMBER_STYLE_LABEL[k]}
+              </option>
+            ))}
+          </select>
+        </label>
+        <small className="muted">
+          校閲のときに、「3000円」と「三千円」のような表記の混在を統一します。漢数字では「3000円 → 三千円」「2024年 → 二〇二四年」、
+          算用数字では「三千円 → 3000円」のようにします。算用数字にする場合も、「一人」「三日月」「一瞬」「十分な」のような語や10未満の数はそのまま残します。
+          英字と組み合わさった語(MP3 など)と、使ってほしいセリフの中は変えません。「本文」タブの「この章の数字を統一」でも実行できます。
+        </small>
       </section>
       <section className="card">
         <h3>表示</h3>

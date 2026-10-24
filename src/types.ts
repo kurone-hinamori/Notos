@@ -263,6 +263,8 @@ export interface Settings {
   author: string;
   /** 本文の文字の大きさ(px) */
   bodyFontSize: number;
+  /** 本文の数字の表記の統一(校閲のときに適用する) */
+  numberStyle: "kanji" | "arabic" | "none";
 }
 
 export const DEFAULT_SETTINGS: Settings = {
@@ -272,6 +274,7 @@ export const DEFAULT_SETTINGS: Settings = {
   numCtx: 16384,
   author: "",
   bodyFontSize: 15,
+  numberStyle: "kanji",
 };
 
 export const DEFAULT_PLAN: BookPlan = { chapters: 12, scenes: 4, charsPerScene: 2000 };

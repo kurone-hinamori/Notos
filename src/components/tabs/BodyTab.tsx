@@ -83,6 +83,13 @@ export function BodyTab(props: { story: Story; mutate: Mutate; start: (t: Task) 
           <button disabled={running || !ch.body} onClick={() => props.start({ kind: "proofread", index: ci })}>
             この章を校閲
           </button>
+          <button
+            disabled={running || !ch.body}
+            title="漢数字と算用数字の混在を、設定画面の「数字の表記」に合わせて統一します(すぐ終わります)"
+            onClick={() => props.start({ kind: "numbers", index: ci })}
+          >
+            この章の数字を統一
+          </button>
         </div>
 
         <details>

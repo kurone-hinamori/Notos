@@ -10,8 +10,22 @@ export function storyChars(story: Story): number {
 }
 
 /** LLM 出力から前置き・コードフェンス・見出しなどを取り除き、段落を改行1つで区切った形に整える。 */
+/**
+ * モデルが文字をバイトのまま出力した「<0xE3><0x80><0x80>」のような文字列を、本来の文字に戻す。
+ * 文字として成り立たない断片は取り除く。
+ */
+export function decodeByteTokens(text: string): { text: string; count: number } {
+  let count = 0;
+  const out = text.replace(/(?:<0x[0-9A-Fa-f]{2}>)+/g, (seq) => {
+    count++;
+    const bytes = Uint8Array.from(seq.match(/[0-9A-Fa-f]{2}(?=>)/g)!.map((h) => parseInt(h, 16)));
+    return new TextDecoder("utf-8").decode(bytes).replace(/�/g, "");
+  });
+  return { text: out, count };
+}
+
 export function cleanProse(raw: string): string {
-  let t = raw.replace(/\r\n?/g, "\n").trim();
+  let t = decodeByteTokens(raw.replace(/\r\n?/g, "\n")).text.trim();
   t = t.replace(/^```[a-z]*\n?/i, "").replace(/\n?```$/, "");
   t = t
     .split("\n")
