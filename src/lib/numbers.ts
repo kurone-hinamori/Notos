@@ -51,7 +51,8 @@ export function parseKanjiNumber(s: string): bigint | null {
   for (const c of s) {
     const d = KANJI_DIGITS.indexOf(c === "零" ? "〇" : c);
     if (d >= 0) {
-      digit = d;
+      // 「三〇〇〇万」のように、単位の前が1字ずつの数になっている場合もある
+      digit = digit < 0 ? d : digit * 10 + d;
       continue;
     }
     const small = SMALL_UNITS.find(([ch]) => ch === c);
@@ -76,7 +77,7 @@ const COUNTERS =
   "円|歳|才|人|名|個|回|年|ヶ月|か月|カ月|月|日|時間|時|分|秒|階|メートル|キロ|グラム|センチ|ミリ|パーセント|%|％|枚|本|匹|頭|羽|冊|台|件|点|度|倍|番|位|号|話|章|部|杯|軒|通|発|歩|席|周|週|万|億";
 
 /** 漢数字としての読みが慣用的な語(算用数字にしない) */
-const IDIOMS = /^(十分(?:な|に|だ|で|す|と|過ぎ|すぎ)|百も承知|千載一遇|万が一|一石二鳥|十中八九|百発百中|四六時中|一日中|千差万別|十八番)/;
+const IDIOMS = /^(十分(?:な|に|だ|で|す|と|過ぎ|すぎ)|百も承知|千載一遇|万が一|一石二鳥|十中八九|百発百中|四六時中|一日中|千差万別|十八番|百八十度)/;
 
 /** 算用数字にするとき、万・億の区切りがちょうどの数は単位を残す(1000000 → 100万、40000000 → 4000万) */
 function toArabicWithUnits(v: bigint): string {
@@ -86,6 +87,48 @@ function toArabicWithUnits(v: bigint): string {
     return `${oku ? `${oku}億` : ""}${man ? `${man}万` : ""}`;
   }
   return v.toString();
+}
+
+/**
+ * 漢数字に統一するときの書き方。
+ * - 万・億で割り切れる数は単位を使う(1000000 → 百万、30000000 → 三〇〇〇万、120000000 → 一億二〇〇〇万)
+ * - 100以上のその他の数は1字ずつ(3000 → 三〇〇〇、5985519 → 五九八五五一九)
+ * - 100未満の数は位取り(17 → 十七、30 → 三十)
+ */
+export function toKanjiStyle(v: bigint): string {
+  // 単位の前の数:十・百・千ちょうどはその字、100未満は位取り、それ以外は1字ずつ
+  const coef = (n: bigint) =>
+    n === 10n ? "十" : n === 100n ? "百" : n === 1000n ? "千" : n < 100n ? toKanjiNumber(n) : toKanjiDigits(n.toString());
+  if (v >= 10000n && v % 10000n === 0n) {
+    const oku = v / 100000000n;
+    const man = (v % 100000000n) / 10000n;
+    return `${oku ? `${coef(oku)}億` : ""}${man ? `${coef(man)}万` : ""}`;
+  }
+  return v < 100n ? toKanjiNumber(v) : toKanjiDigits(v.toString());
+}
+
+/**
+ * 単位(円・人・歳など)の付いた漢数字を探して置き換える。
+ * 慣用的な語・おおよその数・分数・「万人(ばんにん)」・算用数字に続く漢数字などは対象にしない。
+ */
+function replaceKanjiWithCounters(text: string, fn: (kanji: string, v: bigint) => string | null): string {
+  return text.replace(
+    // 「数千万人」「何百年」「幾千」のようなおおよその数や、「1万人」のように算用数字に続く漢数字は変えない
+    new RegExp(`(?<![〇零一二三四五六七八九十百千万億兆数何幾0-9０-９])([〇零一二三四五六七八九十百千万億兆]+)(?=(?:${COUNTERS}))`, "g"),
+    (all, kanji: string, offset: number, whole: string) => {
+      const rest = whole.slice(offset);
+      if (IDIOMS.test(rest)) return all;
+      // 「万人(ばんにん)」のように、位の字だけのものは変えない
+      if (/^[万億兆]+$/.test(kanji)) return all;
+      // 分数(百分の一)は変えない
+      if (rest.slice(kanji.length).startsWith("分の")) return all;
+      // 「十分」は、時間を表すことがはっきりしている場合(十分後・十分間など)だけ変える
+      if (kanji === "十" && rest[1] === "分" && !/^十分(?:後|前|間|以上|以内|ほど|程|くらい|ぐらい|経|おき|ごと|毎)/.test(rest)) return all;
+      const v = parseKanjiNumber(kanji);
+      if (v === null) return all;
+      return fn(kanji, v) ?? all;
+    },
+  );
 }
 
 /**
@@ -116,33 +159,29 @@ export function normalizeNumbers(text: string, style: NumberStyle, protect: stri
           // 西暦・先頭が0の番号・桁の多い数は1字ずつ
           kanji = toKanjiDigits(half);
         } else {
-          kanji = toKanjiNumber(BigInt(half));
+          kanji = toKanjiStyle(BigInt(half));
         }
         count++;
         return kanji + (pct ? "パーセント" : "") + year;
         void all;
       },
     );
+    // すでに漢数字で書かれている数(三千円など)も、同じ書き方(三〇〇〇円)にそろえる。
+    // 「百年」「千円」のような1字だけのものは、語として使われていることが多いのでそのままにする。
+    work = replaceKanjiWithCounters(work, (kanji, v) => {
+      if (v < 100n || /^[百千]$/.test(kanji)) return null;
+      const next = toKanjiStyle(v);
+      if (next === kanji) return null;
+      count++;
+      return next;
+    });
   } else {
-    work = work.replace(
-      // 「数千万人」「何百年」「幾千」のようなおおよその数や、「1万人」のように算用数字に続く漢数字は変えない
-      new RegExp(`(?<![〇零一二三四五六七八九十百千万億兆数何幾0-9０-９])([〇零一二三四五六七八九十百千万億兆]+)(?=(?:${COUNTERS}))`, "g"),
-      (all, kanji: string, offset: number, whole: string) => {
-        const rest = whole.slice(offset);
-        if (IDIOMS.test(rest)) return all;
-        // 「万人(ばんにん)」のように、位の字だけのものは変えない
-        if (/^[万億兆]+$/.test(kanji)) return all;
-        // 分数(百分の一)は変えない
-        if (rest.slice(kanji.length).startsWith("分の")) return all;
-        // 「十分」は、時間を表すことがはっきりしている場合(十分後・十分間など)だけ変える
-        if (kanji === "十" && rest[1] === "分" && !/^十分(?:後|前|間|以上|以内|ほど|程|くらい|ぐらい|経|おき|ごと|毎)/.test(rest)) return all;
-        const v = parseKanjiNumber(kanji);
-        // 10未満で位の字を含まない数(「一人」「三日」など)は漢数字のままにする
-        if (v === null || (v < 10n && !/[十百千万億兆]/.test(kanji))) return all;
-        count++;
-        return toArabicWithUnits(v);
-      },
-    );
+    work = replaceKanjiWithCounters(work, (kanji, v) => {
+      // 10未満で位の字を含まない数(「一人」「三日」など)は漢数字のままにする
+      if (v < 10n && !/[十百千万億兆]/.test(kanji)) return null;
+      count++;
+      return toArabicWithUnits(v);
+    });
   }
   work = work.replace(/\u0000(\d+)\u0000/g, (_, i: string) => kept[Number(i)]);
   return { text: work, count };
