@@ -1,6 +1,6 @@
 import { useState, type ReactNode } from "react";
 import type { Story } from "../types";
-import { hasLine, linePos, parseLines } from "../lib/text";
+import { hasLine, lineBracketOk, linePos, parseLines } from "../lib/text";
 
 /** 使われているセリフが、入力された順番(上から順)に本文に出てくるかを調べる */
 function outOfOrder(chapters: Story["chapters"], lines: string[]): boolean {
@@ -29,7 +29,7 @@ export function LinesField(props: { lines: string[]; onChange: (lines: string[])
       <textarea
         rows={3}
         value={text}
-        placeholder={"例:「それでも、私は行くよ」\n例:レン「約束は、破るためにあるんじゃない」"}
+        placeholder={"例:「それでも、私は行くよ」\n例:レン「約束は、破るためにあるんじゃない」\n例:『聞こえるか、人の子よ』\n例:【草】"}
         onChange={(e) => {
           setText(e.target.value);
           props.onChange(parseLines(e.target.value));
@@ -42,16 +42,19 @@ export function LinesField(props: { lines: string[]; onChange: (lines: string[])
         <ul className="line-status">
           {lines.map((l) => {
             const at = chapters.findIndex((c) => hasLine(c.body, l));
+            // 指定した括弧(『』【】など)と違う括弧で書かれている場合
+            const wrong = at >= 0 && lineBracketOk(chapters[at].body, l) === false;
             return (
-              <li key={l} className={at >= 0 ? "ok" : ""}>
-                {at >= 0 ? `✔ ${chapters.length > 1 ? `第${at + 1}章で使用` : "使用済み"}` : "― 未使用"}:{l}
+              <li key={l} className={at >= 0 && !wrong ? "ok" : ""}>
+                {at >= 0 ? `✔ ${chapters.length > 1 ? `第${at + 1}章で使用` : "使用済み"}${wrong ? "(括弧の種類が違います)" : ""}` : "― 未使用"}:{l}
               </li>
             );
           })}
         </ul>
       )}
       <small className="muted">
-        話者を決めたい場合は、名前を前に付けて <code>レン「…」</code> と書きます(全体をさらにかぎ括弧で囲む必要はありません)。
+        括弧は「」(会話)・『』(念話・人ならざる存在の声など)・【】(配信のコメント・システムメッセージなど)が使え、指定した括弧のまま本文に入れます。
+        話者を決めたい場合は、名前を前に付けて <code>レン「…」</code> と書きます(全体をさらに括弧で囲む必要はありません)。
         どの場面で使うかは構成の作成時に決まり、書いた後に本文へ入っているかを確認します。句読点や記号の違いは同じセリフとみなします。
       </small>
     </label>

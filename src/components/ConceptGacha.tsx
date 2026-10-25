@@ -181,7 +181,7 @@ export function ConceptGacha(props: {
           <textarea
             rows={3}
             value={st.lines}
-            placeholder={"例:「それでも、私は行くよ」\n例:レン「約束は、破るためにあるんじゃない」"}
+            placeholder={"例:「それでも、私は行くよ」\n例:レン「約束は、破るためにあるんじゃない」\n例:『聞こえるか、人の子よ』\n例:【草】"}
             onChange={(e) => {
               const v = e.target.value;
               update((s) => ({ ...s, lines: v }));

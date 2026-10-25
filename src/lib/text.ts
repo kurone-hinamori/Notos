@@ -122,27 +122,65 @@ export function parseLines(text: string): string[] {
 }
 
 /**
- * 指定されたセリフの、本文に現れるべき中身を取り出す。
- * アリア「任せて」のように話者付きで書かれた場合は、かぎ括弧の中だけを使う。
+ * 指定されたセリフの、本文に現れるべき中身を取り出す。括弧は「」『』【】のどれでもよい。
+ * アリア「任せて」のように話者付きで書かれた場合は、括弧の中だけを使う。
  * 「アリア「任せて」」のように全体をさらに囲んである場合も、いちばん内側のセリフを取り出す。
  */
 export function lineCore(line: string): string {
-  // かぎ括弧を含まない(=いちばん内側の)かぎ括弧の中身
-  const m = line.match(/[「『]([^「『」』]+)[」』]/);
-  return (m ? m[1] : line.replace(/[「『」』]/g, "")).trim();
+  // 括弧を含まない(=いちばん内側の)括弧の中身
+  const m = line.match(/[「『【]([^「『【」』】]+)[」』】]/);
+  return (m ? m[1] : line.replace(/[「『【」』】]/g, "")).trim();
 }
 
-/** 空白と、句読点・記号の違いを無視して比べるための正規化 */
-const squash = (s: string) => s.replace(/[\s　、。,.，．!?！？…‥・･―—─\-~〜～「」『』（）()]/g, "");
+/** 指定されたセリフの括弧(いちばん内側)。括弧が書かれていなければ null */
+export function lineBracket(line: string): { open: string; close: string } | null {
+  const m = line.match(/([「『【])[^「『【」』】]+([」』】])/);
+  return m ? { open: m[1], close: m[2] } : null;
+}
 
-/** 本文の中で指定のセリフが現れる位置(正規化した本文での位置)。無ければ -1 */
+/** 指定されたセリフを、本文に現れるべき形(括弧つき)にする。括弧の指定がなければ「」 */
+export function lineQuoted(line: string): string {
+  const b = lineBracket(line) ?? { open: "「", close: "」" };
+  return `${b.open}${lineCore(line)}${b.close}`;
+}
+
+/**
+ * 本文で、指定のセリフが指定の括弧で書かれているか。
+ * true: 指定どおり、false: 別の括弧で書かれている、null: 判定できない(括弧の指定がない・本文にそのままの形がない)
+ */
+export function lineBracketOk(body: string, line: string): boolean | null {
+  const b = lineBracket(line);
+  const core = lineCore(line);
+  const at = core ? body.indexOf(core) : -1;
+  if (!b || at < 0) return null;
+  const before = body.slice(Math.max(0, at - 60), at);
+  const opens = ["「", "『", "【"].map((c) => ({ c, i: before.lastIndexOf(c) })).filter((x) => x.i >= 0);
+  if (!opens.length) return null;
+  const nearest = opens.reduce((x, y) => (y.i > x.i ? y : x));
+  return nearest.c === b.open;
+}
+
+/** 空白と、句読点・記号・括弧の違いを無視して比べるための正規化 */
+const squash = (s: string) => s.replace(/[\s　、。,.，．!?！？…‥・･―—─\-~〜～「」『』【】（）()]/g, "");
+
+/**
+ * 本文の中で指定のセリフが現れる位置(正規化した本文での位置)。無ければ -1。
+ * 【草】のような2文字以下の短いセリフは、「草原」などに紛れないよう、括弧ごと一致したものだけを数える。
+ */
 export function linePos(body: string, line: string): number {
   const core = squash(lineCore(line));
-  return core ? squash(body).indexOf(core) : -1;
+  if (!core) return -1;
+  if ([...core].length <= 2) {
+    const raw = lineCore(line);
+    const hits = ["「", "『", "【"]
+      .map((o) => body.indexOf(o + raw + ({ "「": "」", "『": "』", "【": "】" } as Record<string, string>)[o]))
+      .filter((i) => i >= 0);
+    return hits.length ? squash(body.slice(0, Math.min(...hits))).length : -1;
+  }
+  return squash(body).indexOf(core);
 }
 
 /** 本文に指定のセリフが(空白と句読点・記号の違いを除いて)そのまま入っているか */
 export function hasLine(body: string, line: string): boolean {
-  const core = squash(lineCore(line));
-  return core.length > 0 && squash(body).includes(core);
+  return linePos(body, line) >= 0;
 }

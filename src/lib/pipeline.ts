@@ -33,7 +33,7 @@ import {
   subtitlesSchema,
 } from "./schemas";
 import { normalizeNumbers } from "./numbers";
-import { cleanProse, countChars, decodeByteTokens, hasLine, joinScenes, lineCore, linePos, sameName, splitChunks, tail } from "./text";
+import { cleanProse, countChars, decodeByteTokens, hasLine, lineBracketOk, lineQuoted, joinScenes, lineCore, linePos, sameName, splitChunks, tail } from "./text";
 
 /** パイプラインが物語を読み書きするための窓口(UI 側が保存を担当する)。 */
 export interface Ctx {
@@ -245,7 +245,9 @@ function lineViolations(text: string, lines: string[], later: string[]) {
   const pos = lines.map((l) => linePos(text, l)).filter((p) => p >= 0);
   const outOfOrder = pos.filter((p, i) => i > 0 && p < pos[i - 1]).length;
   const early = later.filter((l) => hasLine(text, l));
-  return { missing, outOfOrder, early, total: missing.length + outOfOrder + early.length };
+  // 指定した括弧(『』【】など)と違う括弧で書かれているもの
+  const wrongBracket = lines.filter((l) => hasLine(text, l) && lineBracketOk(text, l) === false);
+  return { missing, outOfOrder, early, wrongBracket, total: missing.length + outOfOrder + early.length + wrongBracket.length };
 }
 
 /** 全章を通した場面の並び(章の順・場面の順) */
@@ -434,7 +436,7 @@ async function writeScene(ctx: Ctx, ci: number, si: number) {
     throwIfAborted(ctx);
     ctx.stage(`第${ci + 1}章 場面${si + 1} の指定のセリフを直しています`);
     const raw = await chat(settings, {
-      messages: insertLinePrompt(ctx.get(), scene, v.missing, lines, v.early),
+      messages: insertLinePrompt(ctx.get(), scene, [...v.missing, ...v.wrongBracket], lines, v.early),
       signal: ctx.signal,
       numPredict: Math.round(scene.length * 2.5) + 512,
       temperature: 0.5,
@@ -447,6 +449,7 @@ async function writeScene(ctx: Ctx, ci: number, si: number) {
   const left = lineViolations(scene, lines, later);
   if (left.missing.length) ctx.log(`第${ci + 1}章 場面${si + 1}:指定のセリフを入れられませんでした(${left.missing.join(" / ")})`);
   if (left.outOfOrder) ctx.log(`第${ci + 1}章 場面${si + 1}:指定のセリフの順番を直せませんでした`);
+  if (left.wrongBracket.length) ctx.log(`第${ci + 1}章 場面${si + 1}:指定と違う括弧で書かれたセリフがあります(${left.wrongBracket.join(" / ")})`);
   if (left.early.length) ctx.log(`第${ci + 1}章 場面${si + 1}:後の場面のセリフを先に使っています(${left.early.join(" / ")})`);
 
   ctx.update((s) => {
@@ -562,7 +565,7 @@ async function proofreadBody(ctx: Ctx, ci: number): Promise<number> {
     const protectedLines = required.filter((l) => hasLine(original, l));
     try {
       const raw = await chat(ctx.settings, {
-        messages: proofreadChunkPrompt(ctx.get().bible, original, protectedLines.map(lineCore)),
+        messages: proofreadChunkPrompt(ctx.get().bible, original, protectedLines.map(lineQuoted)),
         signal: ctx.signal,
         temperature: 0.2,
         numPredict: Math.round(original.length * 2.5) + 256,
@@ -572,7 +575,7 @@ async function proofreadBody(ctx: Ctx, ci: number): Promise<number> {
       // 暴走・要約・加筆を避けるため、長さと段落数が大きく変わった結果は採用しない
       const ratio = cand.length / original.length;
       const paraRatio = cand.split("\n").length / original.split("\n").length;
-      const linesKept = protectedLines.every((l) => hasLine(cand, l));
+      const linesKept = protectedLines.every((l) => hasLine(cand, l) && lineBracketOk(cand, l) !== false);
       if (cand && linesKept && ratio > 0.85 && ratio < 1.15 && paraRatio > 0.8 && paraRatio < 1.25) fixed = cand;
     } catch (e) {
       if (ctx.signal.aborted) throw e;
@@ -636,6 +639,17 @@ async function checkConsistency(ctx: Ctx, ci: number) {
         issues.push({
           quote: "",
           problem: `指定したセリフ「${lineCore(l.text)}」が本文に入っていません(場面${l.scene + 1}で使う予定でした)。本文に書き足すか、この章を再生成してください。`,
+          replacement: "",
+          applied: false,
+        });
+      }
+    }
+    // 指定した括弧(『』【】など)と違う括弧で書かれていないか
+    for (const l of ch.lines ?? []) {
+      if (hasLine(ch.body, l.text) && lineBracketOk(ch.body, l.text) === false) {
+        issues.push({
+          quote: lineCore(l.text),
+          problem: `指定したセリフ「${lineCore(l.text)}」が、指定とは違う括弧で書かれています(指定:${lineQuoted(l.text)})。`,
           replacement: "",
           applied: false,
         });
