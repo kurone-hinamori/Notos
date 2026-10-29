@@ -754,6 +754,41 @@ ${opts.episodes.length ? opts.episodes.map((e, i) => `第${i + 1}話「${e.title
   ];
 }
 
+/** 連載の名前(作品名)の案を考える */
+export function seriesTitlePrompt(opts: {
+  current: string;
+  genre: string;
+  world: string;
+  keywords: string[];
+  note: string;
+  cast: string[];
+  episodes: { title: string; synopsis: string }[];
+  count: number;
+}): ChatMessage[] {
+  return [
+    {
+      role: "system",
+      content: `${EDITOR}小説投稿サイト「カクヨム」に連載する作品の、作品名を考えます。出力はJSONのみ。`,
+    },
+    {
+      role: "user",
+      content: `次の連載作品の作品名の案を${opts.count}個考えてください。
+
+ジャンル:${opts.genre || "(未定)"}
+キーワード:${opts.keywords.join("、") || "(なし)"}
+${opts.note.trim() ? `補足の希望:${opts.note.trim()}\n` : ""}${opts.world.trim() ? `世界観:${opts.world.trim()}\n` : ""}${opts.cast.length ? `主な登場人物:${opts.cast.join("、")}\n` : ""}${opts.current.trim() ? `今の作品名:${opts.current.trim()}(これとは違う案にする)\n` : ""}
+【各話の内容】
+${opts.episodes.length ? opts.episodes.map((e, i) => `第${i + 1}話「${e.title}」:${e.synopsis}`).join("\n") : "(まだ決まっていません。上の情報から考えてください)"}
+
+【条件】
+- 一覧で目に留まり、内容と読みどころが伝わる、Web小説らしい作品名にする。
+- 長めの説明的なタイトル(〜したら〜だった件、など)、短く印象的なタイトル、「タイトル 〜副題〜」の形などを混ぜ、案ごとに方向性を変える。
+- 1つの案は50字以内。結末やネタバレは含めない。
+- titles に案を${opts.count}個入れる。括弧(「」『』)で囲まない。`,
+    },
+  ];
+}
+
 /** 決まった括弧で話す人物のセリフが、違う括弧で書かれていないかを点検する */
 export function bracketCheckPrompt(story: Story, ci: number, si?: number): ChatMessage[] {
   const ch = story.chapters[ci];

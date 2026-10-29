@@ -2,6 +2,7 @@ import { useEffect, useRef, useState, type ReactNode } from "react";
 import type { Anthology, AnthologyMode, CharacterSheet, Concept, Entry, EntryKind, Settings, SharedCharacter, Story } from "../types";
 import type { Job, RunState } from "../hooks";
 import type { Task } from "../lib/pipeline";
+import { generateSeriesTitles } from "../lib/pipeline";
 import { createEpisode, isUndecided } from "../lib/storage";
 import { anthologyBook } from "../lib/epub";
 import { countChars, storyChars } from "../lib/text";
@@ -729,7 +730,6 @@ function InfoTab({
     ["info-world", isKakuyomu(a) ? "世界観" : "短編集の種類"],
     ["info-cast", "共通の登場人物"],
     ["info-shared", "共通の場所・品物・用語"],
-    ["info-scale", "1話あたりの規模"],
     ...(bible ? ([["episode-bible", "各話の設定資料"]] as [string, string][]) : []),
   ];
   return (
@@ -737,7 +737,7 @@ function InfoTab({
       <SectionMenu sections={sections} />
       <div className="stack">
       <Section id="info-about" title={isKakuyomu(a) ? "連載の情報" : "短編集の情報"}>
-        <Field label={isKakuyomu(a) ? "連載の名前(作品名)" : "タイトル"} value={a.title} onChange={(v) => mutate((d) => void (d.title = v))} />
+        <TitleField anthology={a} settings={settings} onChange={(v) => mutate((d) => void (d.title = v))} />
         <Field
           label="ジャンル(全話共通。空欄の場合は、話ごとにガチャで決まります)"
           value={a.genre ?? ""}
@@ -756,6 +756,45 @@ function InfoTab({
           onChange={(v) => mutate((d) => void (d.keywords = v.split(/[,、，]+/).map((k) => k.trim()).filter(Boolean)))}
         />
         <Field label="全話に共通する補足の希望" rows={2} value={a.note} onChange={(v) => mutate((d) => void (d.note = v))} />
+        <strong className="small-text">1話あたりの規模(既定値)</strong>
+        <div className="two-col">
+          <label className="field">
+            <span>{isKakuyomu(a) ? "1話あたりの連載回数(場面数)" : "1話あたりの場面数"}</span>
+            <input
+              type="number"
+              min={2}
+              max={8}
+              value={a.plan.scenes}
+              onChange={(e) => mutate((d) => void (d.plan.scenes = Math.min(8, Math.max(2, Number(e.target.value) || 2))))}
+            />
+          </label>
+          <label className="field">
+            <span>{isKakuyomu(a) ? "1回分の文字数(目安)" : "1場面の文字数(目安)"}</span>
+            <input
+              type="number"
+              min={600}
+              max={4000}
+              step={100}
+              value={a.plan.charsPerScene}
+              onChange={(e) => mutate((d) => void (d.plan.charsPerScene = Math.min(4000, Math.max(600, Number(e.target.value) || 600))))}
+            />
+          </label>
+        </div>
+        <p className="muted small-text">1話あたりの規模の既定値です。新しく追加する話に使われます。既存の話の規模は、各話の「制作」タブで変更できます。</p>
+        <div className="row">
+          <button
+            disabled={unstarted === 0}
+            onClick={() =>
+              mutate((d) => {
+                for (const e of d.episodes) {
+                  if (!e.chapters.length) e.plan = { chapters: 1, scenes: d.plan.scenes, charsPerScene: d.plan.charsPerScene };
+                }
+              })
+            }
+          >
+            構成がまだない話({unstarted}話)にこの規模を反映
+          </button>
+        </div>
       </Section>
       <Section id="info-world" title={isKakuyomu(a) ? "世界観" : "短編集の種類"}>
         {isKakuyomu(a) ? (
@@ -798,48 +837,80 @@ function InfoTab({
           episodes={a.episodes.map((e, i) => ({ id: e.id, label: `第${i + 1}話${e.title ? `「${e.title}」` : ""}` }))}
         />
       </Section>
-      <Section id="info-scale" title="1話あたりの規模(既定値)">
-        <div className="two-col">
-          <label className="field">
-            <span>場面数</span>
-            <input
-              type="number"
-              min={2}
-              max={8}
-              value={a.plan.scenes}
-              onChange={(e) => mutate((d) => void (d.plan.scenes = Math.min(8, Math.max(2, Number(e.target.value) || 2))))}
-            />
-          </label>
-          <label className="field">
-            <span>1場面の文字数(目安)</span>
-            <input
-              type="number"
-              min={600}
-              max={4000}
-              step={100}
-              value={a.plan.charsPerScene}
-              onChange={(e) => mutate((d) => void (d.plan.charsPerScene = Math.min(4000, Math.max(600, Number(e.target.value) || 600))))}
-            />
-          </label>
-        </div>
-        <p className="muted small-text">新しく追加する話に使われます。既存の話の規模は、各話の「制作」タブで変更できます。</p>
-        <div className="row">
-          <button
-            disabled={unstarted === 0}
-            onClick={() =>
-              mutate((d) => {
-                for (const e of d.episodes) {
-                  if (!e.chapters.length) e.plan = { chapters: 1, scenes: d.plan.scenes, charsPerScene: d.plan.charsPerScene };
-                }
-              })
-            }
-          >
-            構成がまだない話({unstarted}話)にこの規模を反映
-          </button>
-        </div>
-      </Section>
       {bible && <div id="episode-bible">{bible}</div>}
       </div>
+    </div>
+  );
+}
+
+/** 連載の名前(作品名)の入力欄。ガチャで案を出し、選んだ案を作品名にする */
+function TitleField({ anthology: a, settings, onChange }: { anthology: Anthology; settings: Settings; onChange: (v: string) => void }) {
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState("");
+  const [ideas, setIdeas] = useState<string[]>([]);
+  const abort = useRef<AbortController | null>(null);
+  const serial = isKakuyomu(a);
+
+  const pull = async () => {
+    setBusy(true);
+    setError("");
+    abort.current = new AbortController();
+    try {
+      const list = await generateSeriesTitles(
+        settings,
+        {
+          current: a.title,
+          genre: a.genre ?? "",
+          world: a.world ?? "",
+          keywords: a.keywords,
+          note: a.note,
+          cast: (a.cast ?? []).map((c) => `${c.name}(${c.role})`),
+          episodes: a.episodes.filter((e) => !isUndecided(e)).map((e) => ({ title: e.title, synopsis: e.synopsis })),
+        },
+        abort.current.signal,
+      );
+      setIdeas(list);
+      if (!list.length) setError("案を作れませんでした。もう一度引いてください。");
+    } catch (e) {
+      if (!abort.current?.signal.aborted) setError(e instanceof Error ? e.message : String(e));
+    } finally {
+      setBusy(false);
+      abort.current = null;
+    }
+  };
+
+  return (
+    <div className="field">
+      <span>{serial ? "連載の名前(作品名)" : "タイトル"}</span>
+      <div className="row">
+        <input className="grow" value={a.title} onChange={(e) => onChange(e.target.value)} />
+        <button disabled={busy || !settings.model} onClick={(e) => (e.preventDefault(), void pull())}>
+          {busy ? "考え中…" : "🎲 ガチャで考える"}
+        </button>
+        {busy && <button onClick={(e) => (e.preventDefault(), abort.current?.abort())}>中止</button>}
+      </div>
+      {error && <small className="error">{error}</small>}
+      {ideas.length > 0 && (
+        <div className="stack">
+          <small className="muted">
+            ジャンル・キーワード・世界観・共通の登場人物と、概要が決まっている話から考えました。押すと作品名にします。
+          </small>
+          <div className="row wrap">
+            {ideas.map((t) => (
+              <button
+                key={t}
+                className={t === a.title ? "small primary" : "small"}
+                onClick={(e) => {
+                  e.preventDefault();
+                  onChange(t);
+                }}
+              >
+                {t}
+              </button>
+            ))}
+          </div>
+        </div>
+      )}
     </div>
   );
 }

@@ -19,6 +19,7 @@ import {
   insertLinePrompt,
   kakuyomuPrompt,
   subtitlesPrompt,
+  seriesTitlePrompt,
   type ConceptRequest,
 } from "./prompts";
 import {
@@ -403,6 +404,25 @@ async function stepSubtitles(ctx: Ctx) {
     c.sceneTitles = c.beats.map((_, i) => titles[i] || c.sceneTitles?.[i] || `${i + 1}`);
   });
   ctx.log(`サブタイトルを作成しました:${ctx.get().chapters[0].sceneTitles!.join(" / ")}`);
+}
+
+/** 連載の名前(作品名)の案を考える */
+export async function generateSeriesTitles(
+  settings: Settings,
+  opts: Omit<Parameters<typeof seriesTitlePrompt>[0], "count">,
+  signal?: AbortSignal,
+): Promise<string[]> {
+  const r = await chatJson<{ titles: string[] }>(settings, {
+    messages: seriesTitlePrompt({ ...opts, count: 5 }),
+    schema: subtitlesSchema,
+    temperature: Math.min(1.1, settings.temperature + 0.25),
+    signal,
+  });
+  // 全体を囲む括弧だけを外す(「光あれ」が通った日、のように途中から始まる括弧は残す)
+  const titles = (r.titles ?? [])
+    .map((x) => x.trim().replace(/^「([^「」]*)」$/, "$1").replace(/^『([^『』]*)』$/, "$1").trim())
+    .filter(Boolean);
+  return [...new Set(titles)].filter((x) => x !== opts.current.trim());
 }
 
 /** カクヨム連載:キャッチコピー・紹介文・タグを考える(上限を超えたら作り直し、それでも超えたら切り詰める) */
