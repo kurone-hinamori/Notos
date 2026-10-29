@@ -83,9 +83,9 @@ export function Field(props: {
   );
 }
 
-export function Section(props: { title: string; actions?: ReactNode; children: ReactNode }) {
+export function Section(props: { title: string; actions?: ReactNode; children: ReactNode; id?: string }) {
   return (
-    <section className="card">
+    <section className="card" id={props.id}>
       <header className="card-head">
         <h3>{props.title}</h3>
         <div className="row">{props.actions}</div>

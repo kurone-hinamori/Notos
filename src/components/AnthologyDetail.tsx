@@ -724,50 +724,19 @@ function InfoTab({
     const i = a.episodes.findIndex((e) => e.id === id);
     return i < 0 ? "(削除された話)" : `第${i + 1}話「${a.episodes[i].title}」`;
   };
+  const sections: [string, string][] = [
+    ["info-about", isKakuyomu(a) ? "連載の情報" : "短編集の情報"],
+    ["info-world", isKakuyomu(a) ? "世界観" : "短編集の種類"],
+    ["info-cast", "共通の登場人物"],
+    ["info-shared", "共通の場所・品物・用語"],
+    ["info-scale", "1話あたりの規模"],
+    ...(bible ? ([["episode-bible", "各話の設定資料"]] as [string, string][]) : []),
+  ];
   return (
-    <div className="stack">
-      <Section title={isKakuyomu(a) ? "世界観" : "短編集の種類"}>
-        {isKakuyomu(a) ? (
-          <p className="muted small-text">カクヨム連載は連作短編として作ります(前の話の出来事が次の話に引き継がれます)。</p>
-        ) : (
-          <ModeSelect mode={a.mode ?? "omnibus"} onChange={(m) => mutate((d) => void (d.mode = m))} />
-        )}
-        <Field
-          label="共通の世界観・舞台(全話に適用されます)"
-          rows={3}
-          value={a.world ?? ""}
-          onChange={(v) => mutate((d) => void (d.world = v))}
-        />
-      </Section>
-      <Section title="共通の登場人物">
-        <CastEditor
-          cast={a.cast ?? []}
-          onChange={(fn) =>
-            mutate((d) => {
-              d.cast = fn(d.cast ?? []);
-              // セリフの括弧は、作成済みの各話の設定資料にも反映する(校閲の括弧の点検で使うため)
-              for (const c of d.cast)
-                for (const e of d.episodes)
-                  for (const x of e.bible.characters) if (sameName(x.name, c.name)) x.bracket = c.bracket;
-            })
-          }
-          settings={settings}
-          context={{ title: a.title, keywords: a.keywords, note: a.note, world: a.world ?? "" }}
-          onWorld={(w) => mutate((d) => void (d.world = w))}
-          episodeLabel={label}
-        />
-      </Section>
-      <Section title="共通の場所・品物・用語">
-        <SharedEntriesEditor
-          shared={a.shared ?? {}}
-          onChange={(fn) => mutate((d) => void (d.shared = fn(d.shared ?? {})))}
-          settings={settings}
-          context={{ title: a.title, keywords: a.keywords, note: a.note, world: a.world ?? "", cast: (a.cast ?? []).map((c) => c.name) }}
-          episodeLabel={label}
-          episodes={a.episodes.map((e, i) => ({ id: e.id, label: `第${i + 1}話${e.title ? `「${e.title}」` : ""}` }))}
-        />
-      </Section>
-      <Section title={isKakuyomu(a) ? "連載の情報" : "短編集の情報"}>
+    <div className="info-layout">
+      <SectionMenu sections={sections} />
+      <div className="stack">
+      <Section id="info-about" title={isKakuyomu(a) ? "連載の情報" : "短編集の情報"}>
         <Field label={isKakuyomu(a) ? "連載の名前(作品名)" : "タイトル"} value={a.title} onChange={(v) => mutate((d) => void (d.title = v))} />
         <Field
           label="ジャンル(全話共通。空欄の場合は、話ごとにガチャで決まります)"
@@ -788,7 +757,48 @@ function InfoTab({
         />
         <Field label="全話に共通する補足の希望" rows={2} value={a.note} onChange={(v) => mutate((d) => void (d.note = v))} />
       </Section>
-      <Section title="1話あたりの規模(既定値)">
+      <Section id="info-world" title={isKakuyomu(a) ? "世界観" : "短編集の種類"}>
+        {isKakuyomu(a) ? (
+          <p className="muted small-text">カクヨム連載は連作短編として作ります(前の話の出来事が次の話に引き継がれます)。</p>
+        ) : (
+          <ModeSelect mode={a.mode ?? "omnibus"} onChange={(m) => mutate((d) => void (d.mode = m))} />
+        )}
+        <Field
+          label="共通の世界観・舞台(全話に適用されます)"
+          rows={3}
+          value={a.world ?? ""}
+          onChange={(v) => mutate((d) => void (d.world = v))}
+        />
+      </Section>
+      <Section id="info-cast" title="共通の登場人物">
+        <CastEditor
+          cast={a.cast ?? []}
+          onChange={(fn) =>
+            mutate((d) => {
+              d.cast = fn(d.cast ?? []);
+              // セリフの括弧は、作成済みの各話の設定資料にも反映する(校閲の括弧の点検で使うため)
+              for (const c of d.cast)
+                for (const e of d.episodes)
+                  for (const x of e.bible.characters) if (sameName(x.name, c.name)) x.bracket = c.bracket;
+            })
+          }
+          settings={settings}
+          context={{ title: a.title, keywords: a.keywords, note: a.note, world: a.world ?? "" }}
+          onWorld={(w) => mutate((d) => void (d.world = w))}
+          episodeLabel={label}
+        />
+      </Section>
+      <Section id="info-shared" title="共通の場所・品物・用語">
+        <SharedEntriesEditor
+          shared={a.shared ?? {}}
+          onChange={(fn) => mutate((d) => void (d.shared = fn(d.shared ?? {})))}
+          settings={settings}
+          context={{ title: a.title, keywords: a.keywords, note: a.note, world: a.world ?? "", cast: (a.cast ?? []).map((c) => c.name) }}
+          episodeLabel={label}
+          episodes={a.episodes.map((e, i) => ({ id: e.id, label: `第${i + 1}話${e.title ? `「${e.title}」` : ""}` }))}
+        />
+      </Section>
+      <Section id="info-scale" title="1話あたりの規模(既定値)">
         <div className="two-col">
           <label className="field">
             <span>場面数</span>
@@ -829,6 +839,44 @@ function InfoTab({
         </div>
       </Section>
       {bible && <div id="episode-bible">{bible}</div>}
+      </div>
     </div>
+  );
+}
+
+/** 「連載の情報」タブの左に置く、各項目へ移動するメニュー。いま見ている項目を強調する */
+function SectionMenu({ sections }: { sections: [string, string][] }) {
+  const [current, setCurrent] = useState(sections[0]?.[0] ?? "");
+  useEffect(() => {
+    const main = document.querySelector(".main");
+    if (!main) return;
+    const onScroll = () => {
+      // 上端(固定表示のタブの下)を過ぎた最後の項目を、いま見ている項目とする
+      const top = main.getBoundingClientRect().top + 80;
+      let hit = sections[0]?.[0] ?? "";
+      for (const [id] of sections) {
+        const el = document.getElementById(id);
+        if (el && el.getBoundingClientRect().top <= top) hit = id;
+      }
+      // 一番下までスクロールしたら、最後の項目にする
+      if (main.scrollTop + main.clientHeight >= main.scrollHeight - 4) hit = sections[sections.length - 1]?.[0] ?? hit;
+      setCurrent(hit);
+    };
+    onScroll();
+    main.addEventListener("scroll", onScroll, { passive: true });
+    return () => main.removeEventListener("scroll", onScroll);
+  }, [sections.map(([id]) => id).join()]);
+  return (
+    <nav className="section-menu">
+      {sections.map(([id, label]) => (
+        <button
+          key={id}
+          className={current === id ? "active" : ""}
+          onClick={() => document.getElementById(id)?.scrollIntoView({ behavior: "smooth", block: "start" })}
+        >
+          {label}
+        </button>
+      ))}
+    </nav>
   );
 }
