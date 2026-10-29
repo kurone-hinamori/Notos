@@ -12,20 +12,18 @@ const DUPLICATE_QUESTION =
 import { loadSettings, loadStory, persistSettings } from "./lib/storage";
 import { useStoryManager } from "./hooks";
 import { StoryList } from "./components/StoryList";
-import { NewStory, type Seed } from "./components/NewStory";
 import { StoryDetail } from "./components/StoryDetail";
 import { NewAnthology } from "./components/NewAnthology";
 import { AnthologyDetail } from "./components/AnthologyDetail";
 import { SettingsView } from "./components/SettingsView";
 import { UpdateBanner } from "./components/Updater";
 
+// 新しく作れるのはカクヨム連載だけ。長編と短編集は、作成済みのものを開いて読む・直すことだけできる
 type View =
   | { name: "list" }
-  | { name: "new"; seed?: Seed }
   | { name: "settings" }
   | { name: "detail"; id: string; tab?: string }
   | { name: "anthologies" }
-  | { name: "anthology-new" }
   | { name: "anthology"; id: string }
   | { name: "serials" }
   | { name: "serial-new" }
@@ -33,7 +31,7 @@ type View =
 
 export default function App() {
   const [settings, setSettings] = useState<Settings>(loadSettings);
-  const [view, setView] = useState<View>({ name: "list" });
+  const [view, setView] = useState<View>({ name: "serials" });
   const [loadError, setLoadError] = useState("");
   const mgr = useStoryManager(settings);
 
@@ -76,29 +74,8 @@ export default function App() {
     setView(v);
   };
 
-  /** 物語の企画(キーワード・概要)を複製して、新規作成画面からやり直す。元の物語は変更しない。 */
-  const duplicate = async (id: string) => {
-    setLoadError("");
-    try {
-      await mgr.flush();
-      const s = await loadStory(id);
-      if (isAnthology(s)) return;
-      await go({
-        name: "new",
-        seed: {
-          title: s.title,
-          keywords: s.keywords,
-          note: s.note ?? "",
-          concept: { title: s.title, tagline: s.tagline, genre: s.genre, synopsis: s.synopsis, characters: s.characters },
-        },
-      });
-    } catch (e) {
-      setLoadError(`複製できませんでした:${e instanceof Error ? e.message : String(e)}`);
-    }
-  };
-
   /**
-   * 短編集・カクヨム連載を複製して、複製したものを開く。元の作品は変更しない。
+   * カクヨム連載を複製して、複製したものを開く。元の作品は変更しない。
    * 設定は引き継ぎ、設定資料・本文は引き継がない。各話のあらすじを引き継ぐかは選べる。
    */
   const duplicateAnthology = async (id: string) => {
@@ -114,12 +91,6 @@ export default function App() {
     } catch (e) {
       setLoadError(`複製できませんでした:${e instanceof Error ? e.message : String(e)}`);
     }
-  };
-
-  const create = async (s: Story) => {
-    await mgr.adopt(s);
-    setView({ name: "detail", id: s.id, tab: "production" });
-    document.querySelector(".main")?.scrollTo({ top: 0 });
   };
 
   const createAnthology = async (a: Anthology) => {
@@ -146,26 +117,19 @@ export default function App() {
           </div>
         </div>
         <nav>
-          <small className="nav-label">長編</small>
-          <button className={view.name === "list" || view.name === "detail" ? "active" : ""} onClick={() => void go({ name: "list" })}>
-            📚 物語の一覧
-          </button>
-          <button className={view.name === "new" ? "active" : ""} onClick={() => void go({ name: "new" })}>
-            ✨ 新しい物語
-          </button>
-          <small className="nav-label">短編集</small>
-          <button className={view.name === "anthologies" || view.name === "anthology" ? "active" : ""} onClick={() => void go({ name: "anthologies" })}>
-            📖 短編集の一覧
-          </button>
-          <button className={view.name === "anthology-new" ? "active" : ""} onClick={() => void go({ name: "anthology-new" })}>
-            ✨ 新しい短編集
-          </button>
           <small className="nav-label">カクヨム連載</small>
           <button className={view.name === "serials" || view.name === "serial" ? "active" : ""} onClick={() => void go({ name: "serials" })}>
             📝 連載の一覧
           </button>
           <button className={view.name === "serial-new" ? "active" : ""} onClick={() => void go({ name: "serial-new" })}>
             ✨ 新しい連載
+          </button>
+          <small className="nav-label">これまでの作品(閲覧)</small>
+          <button className={view.name === "list" || view.name === "detail" ? "active" : ""} onClick={() => void go({ name: "list" })}>
+            📚 長編の一覧
+          </button>
+          <button className={view.name === "anthologies" || view.name === "anthology" ? "active" : ""} onClick={() => void go({ name: "anthologies" })}>
+            📖 短編集の一覧
           </button>
           <small className="nav-label" />
           <button className={view.name === "settings" ? "active" : ""} onClick={() => void go({ name: "settings" })}>
@@ -197,9 +161,8 @@ export default function App() {
         )}
         {loadError && <p className="error">{loadError}</p>}
         {view.name === "anthologies" && (
-          <StoryList onDelete={mgr.remove} onDuplicate={(id) => void duplicateAnthology(id)} key="anthology" kind="anthology" onOpen={(id) => void openAnthology(id)} onNew={() => void go({ name: "anthology-new" })} />
+          <StoryList onDelete={mgr.remove} key="anthology" kind="anthology" onOpen={(id) => void openAnthology(id)} />
         )}
-        {view.name === "anthology-new" && <NewAnthology settings={settings} onCreate={createAnthology} />}
         {view.name === "serials" && (
           <StoryList onDelete={mgr.remove} onDuplicate={(id) => void duplicateAnthology(id)} key="serial" kind="serial" onOpen={(id) => void openAnthology(id, true)} onNew={() => void go({ name: "serial-new" })} />
         )}
@@ -215,11 +178,10 @@ export default function App() {
             execute={(jobs) => void mgr.execute(jobs)}
             stop={mgr.stop}
             onBack={() => void go({ name: view.name === "serial" ? "serials" : "anthologies" })}
-            onDuplicate={() => void duplicateAnthology(mgr.anthology!.id)}
+            onDuplicate={view.name === "serial" ? () => void duplicateAnthology(mgr.anthology!.id) : undefined}
           />
         )}
-        {view.name === "list" && <StoryList onDelete={mgr.remove} key="novel" kind="novel" onOpen={(id, tab) => void openStory(id, tab)} onDuplicate={(id) => void duplicate(id)} onNew={() => void go({ name: "new" })} />}
-        {view.name === "new" && <NewStory key={view.seed?.title ?? "blank"} settings={settings} seed={view.seed} onCreate={create} />}
+        {view.name === "list" && <StoryList onDelete={mgr.remove} key="novel" kind="novel" onOpen={(id, tab) => void openStory(id, tab)} />}
         {view.name === "settings" && <SettingsView settings={settings} generating={mgr.run.running} onChange={setSettings} />}
         {view.name === "detail" && mgr.story && mgr.story.id === view.id && (
           <StoryDetail
@@ -232,7 +194,6 @@ export default function App() {
             start={(t) => void mgr.start(t)}
             stop={mgr.stop}
             onBack={() => void go({ name: "list" })}
-            onDuplicate={() => void duplicate(mgr.story!.id)}
           />
         )}
       </main>

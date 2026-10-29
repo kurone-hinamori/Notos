@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useRef, useState, type ReactNode } from "react";
 import type { Anthology, AnthologyMode, CharacterSheet, Concept, Entry, EntryKind, Settings, SharedCharacter, Story } from "../types";
 import type { Job, RunState } from "../hooks";
 import type { Task } from "../lib/pipeline";
@@ -9,7 +9,7 @@ import { ConceptGacha, cleanKeywords, initialGacha, type GachaState } from "./Co
 import { ArtTab, type Mutate } from "./StoryDetail";
 import { OverviewTab } from "./tabs/OverviewTab";
 import { ProductionTab } from "./tabs/ProductionTab";
-import { BodyTab } from "./tabs/BodyTab";
+import { SceneBodyTab } from "./tabs/SceneBodyTab";
 import { BibleTab } from "./tabs/BibleTab";
 import { ExportTab } from "./tabs/ExportTab";
 import { Field, Section } from "./ui";
@@ -28,7 +28,7 @@ import {
   toSharedEntry,
 } from "../lib/anthology";
 import { SharedEntriesEditor } from "./SharedEntriesEditor";
-import { KakuyomuInfoEditor, KakuyomuPosts } from "./Kakuyomu";
+import { KakuyomuPosts } from "./Kakuyomu";
 import { parseLines, sameName } from "../lib/text";
 
 /** 短編集の種類の選択 */
@@ -95,7 +95,8 @@ export function AnthologyDetail(props: {
   execute: (jobs: Job[]) => void;
   stop: () => void;
   onBack: () => void;
-  onDuplicate: () => void;
+  /** 複製して作り直す(新しく作れるのはカクヨム連載だけなので、短編集では渡さない) */
+  onDuplicate?: () => void;
 }) {
   const { anthology: a, run, mutate } = props;
   const serial = isKakuyomu(a);
@@ -229,13 +230,15 @@ export function AnthologyDetail(props: {
         </div>
         <div className="row">
           {runningHere && <span className="running">● 生成中:{run.stage}</span>}
-          <button
-            disabled={runningHere}
-            title="設定(共通の登場人物・場所・品物、掲載情報、各話の仕込みなど)を引き継いで、新しく作り直します。元の作品は残ります。"
-            onClick={props.onDuplicate}
-          >
-            複製して作り直す
-          </button>
+          {props.onDuplicate && (
+            <button
+              disabled={runningHere}
+              title="設定(共通の登場人物・場所・品物、掲載情報、各話の仕込みなど)を引き継いで、新しく作り直します。元の作品は残ります。"
+              onClick={props.onDuplicate}
+            >
+              複製して作り直す
+            </button>
+          )}
         </div>
       </header>
 
@@ -355,14 +358,38 @@ export function AnthologyDetail(props: {
                 onRemove={() => removeEpisode(index)}
                 onPromote={(c) => promote(index, c)}
                 onCastIds={(ids) => setCastIds(index, ids)}
+                onShowBible={() => {
+                  setTab("info");
+                  window.setTimeout(() => document.getElementById("episode-bible")?.scrollIntoView({ block: "start" }), 0);
+                }}
               />
             )}
           </div>
         </div>
       )}
 
-      {tab === "info" && <InfoTab anthology={a} mutate={mutate} settings={props.settings} />}
-      {tab === "kakuyomu" && <KakuyomuPosts anthology={a} mutate={mutate} start={props.start} running={run.running} />}
+      {tab === "info" && (
+        <InfoTab
+          anthology={a}
+          mutate={mutate}
+          settings={props.settings}
+          bible={
+            serial && (
+              <EpisodeBible
+                anthology={a}
+                selected={index}
+                onSelect={setSelected}
+                mutate={mutate}
+                start={props.start}
+                running={run.running}
+                onPromote={promote}
+                onPromoteEntry={promoteEntry}
+              />
+            )
+          }
+        />
+      )}
+      {tab === "kakuyomu" && <KakuyomuPosts anthology={a} mutate={mutate} start={props.start} running={run.running} settings={props.settings} />}
       {tab === "art" && <ArtTab />}
       {tab === "export" && (
         <ExportTab
@@ -400,8 +427,12 @@ function EpisodePanel(props: {
   onRemove: () => void;
   onPromote: (c: CharacterSheet) => void;
   onCastIds: (ids: string[]) => void;
+  /** カクヨム連載:設定資料は「連載の情報」タブにあるので、そこを開く */
+  onShowBible: () => void;
 }) {
   const { anthology: a, index, episode: ep, run } = props;
+  const serial = isKakuyomu(a);
+  const infoTab = serial ? "連載の情報" : "短編集の情報";
   const cast = a.cast ?? [];
   // この話に渡される共通の設定(登場する話より前のものは渡されない)
   const passed = sharedContextFor(a, index).entries ?? [];
@@ -420,7 +451,7 @@ function EpisodePanel(props: {
       )}
       {hasShared && (
         <div className="field">
-          <span>この話での共通の場所・品物・用語(「短編集の情報」タブで変更できます)</span>
+          <span>この話での共通の場所・品物・用語(「{infoTab}」タブで変更できます)</span>
           <div className="row wrap">
             {passed.map((e) => (
               <span key={e.kind + e.name} className={e.status === "acquire" ? "tag tag-strong" : "tag"}>
@@ -544,11 +575,19 @@ function EpisodePanel(props: {
             ["body", "本文"],
             ["bible", "設定資料"],
           ] as const
-        ).map(([id, label]) => (
-          <button key={id} className={tab === id ? "active" : ""} onClick={() => setTab(id)}>
-            {label}
+        )
+          // カクヨム連載の設定資料は「連載の情報」タブにまとめている
+          .filter(([id]) => !serial || id !== "bible")
+          .map(([id, label]) => (
+            <button key={id} className={tab === id ? "active" : ""} onClick={() => setTab(id)}>
+              {label}
+            </button>
+          ))}
+        {serial && (
+          <button title="この話の設定資料を「連載の情報」タブで開きます" onClick={props.onShowBible}>
+            設定資料 ↗
           </button>
-        ))}
+        )}
       </nav>
       {tab === "overview" && (
         <div className="stack">
@@ -566,8 +605,8 @@ function EpisodePanel(props: {
           disabled={run.running && run.storyId !== ep.id}
         />
       )}
-      {tab === "body" && <BodyTab story={ep} mutate={props.mutate} start={props.start} running={run.running} />}
-      {tab === "bible" && (
+      {tab === "body" && <SceneBodyTab story={ep} mutate={props.mutate} start={props.start} running={run.running} serial={serial} />}
+      {tab === "bible" && !serial && (
         <BibleTab
           story={ep}
           mutate={props.mutate}
@@ -617,7 +656,69 @@ function CastPicker(props: {
   );
 }
 
-function InfoTab({ anthology: a, mutate, settings }: { anthology: Anthology; mutate: MutateAnthology; settings: Settings }) {
+/** カクヨム連載:各話の設定資料(「連載の情報」タブで、共通の設定と並べて見る) */
+function EpisodeBible(props: {
+  anthology: Anthology;
+  selected: number;
+  onSelect: (i: number) => void;
+  mutate: MutateAnthology;
+  start: (t: Task, episode: number) => void;
+  running: boolean;
+  onPromote: (i: number, c: CharacterSheet) => void;
+  onPromoteEntry: (i: number, kind: EntryKind, e: Entry) => void;
+}) {
+  const { anthology: a, selected: i } = props;
+  const ep = a.episodes[i];
+  if (!ep) return null;
+  return (
+    <Section
+      title="各話の設定資料"
+      actions={
+        <select value={i} onChange={(e) => props.onSelect(Number(e.target.value))}>
+          {a.episodes.map((e, k) => (
+            <option key={e.id} value={k}>
+              第{k + 1}話 {e.title || "(未決定)"}
+              {e.bible.generated ? "" : "(設定資料なし)"}
+            </option>
+          ))}
+        </select>
+      }
+    >
+      <p className="muted small-text">
+        話ごとに、その話の本文で使う人物・場所・品物を書いた資料です。共通の登場人物・場所・品物はこの資料の先頭に入ります。
+        次の話以降にも出したいものは「共通にする」で、上の共通の設定に登録できます。
+      </p>
+      {isUndecided(ep) ? (
+        <p className="muted">この話はまだ概要が決まっていません。</p>
+      ) : (
+        <BibleTab
+          key={ep.id}
+          story={ep}
+          mutate={(m) => props.mutate((d) => m(d.episodes[i]))}
+          start={(t) => props.start(t, i)}
+          running={props.running}
+          onPromote={(c) => props.onPromote(i, c)}
+          isShared={(name) => castOf(a, ep).some((c) => sameName(c.name, name))}
+          onPromoteEntry={(kind, e) => props.onPromoteEntry(i, kind, e)}
+          isSharedEntry={(kind, name) => sharedEntries(a).some((x) => x.kind === kind && sameName(x.entry.name, name))}
+        />
+      )}
+    </Section>
+  );
+}
+
+function InfoTab({
+  anthology: a,
+  mutate,
+  settings,
+  bible,
+}: {
+  anthology: Anthology;
+  mutate: MutateAnthology;
+  settings: Settings;
+  /** カクヨム連載:各話の設定資料 */
+  bible?: ReactNode;
+}) {
   const unstarted = a.episodes.filter((e) => !e.chapters.length).length;
   const label = (id: string) => {
     const i = a.episodes.findIndex((e) => e.id === id);
@@ -625,11 +726,6 @@ function InfoTab({ anthology: a, mutate, settings }: { anthology: Anthology; mut
   };
   return (
     <div className="stack">
-      {isKakuyomu(a) && (
-        <Section title="カクヨムの掲載情報(キャッチコピー・紹介文・タグ)">
-          <KakuyomuInfoEditor anthology={a} mutate={mutate} settings={settings} />
-        </Section>
-      )}
       <Section title={isKakuyomu(a) ? "世界観" : "短編集の種類"}>
         {isKakuyomu(a) ? (
           <p className="muted small-text">カクヨム連載は連作短編として作ります(前の話の出来事が次の話に引き継がれます)。</p>
@@ -732,6 +828,7 @@ function InfoTab({ anthology: a, mutate, settings }: { anthology: Anthology; mut
           </button>
         </div>
       </Section>
+      {bible && <div id="episode-bible">{bible}</div>}
     </div>
   );
 }

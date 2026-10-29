@@ -1,6 +1,6 @@
 import type { ChatMessage } from "./ollama";
 import type { Bible, BookPlan, SharedContext, SharedEntryContext, Story } from "../types";
-import { bibleToText, tail } from "./text";
+import { bibleToText, splitScenes, tail } from "./text";
 
 const EDITOR = "あなたは「小説家になろう」「カクヨム」で人気作を数多く手がけてきた、ライトノベル作家兼編集者です。";
 
@@ -325,6 +325,8 @@ export function scenePrompt(opts: {
   lines?: string[];
   /** 後の場面で使うので、この場面ではまだ使わないセリフ */
   later?: string[];
+  /** 場面を書き直す場合の、この場面の後に続く本文の冒頭 */
+  nextHead?: string;
 }): ChatMessage[] {
   const { story, ci, si, target, previousTail, existingInScene } = opts;
   const ch = story.chapters[ci];
@@ -362,7 +364,7 @@ ${
       ? `【前の話までのあらすじ】\n${story.shared?.previous || "(なし)"}\n${serial.prevTail ? `\n【前の話の最後の本文】\n${serial.prevTail}\n` : ""}\nこれは連載の第${serial.index + 1}話の書き出しです。前の話の続きとして、自然につなげて書き始めてください。\n`
       : "【これが物語の冒頭です】\n"
 }
-${existingInScene ? `【この場面でここまでに書いた部分】\n${tail(existingInScene, 1500)}\n\n上の続きを、同じ場面のまま書き足してください。場面を終わらせたり、まとめに入ったりしないでください。\n` : ""}
+${opts.nextHead ? `【この場面の後に続く本文の冒頭(すでに書かれている)】\n${opts.nextHead}\n\nこの場面は書き直しです。上の本文へ自然につながるように書き、上の本文の内容を先に書かないでください。\n` : ""}${existingInScene ? `【この場面でここまでに書いた部分】\n${tail(existingInScene, 1500)}\n\n上の続きを、同じ場面のまま書き足してください。場面を終わらせたり、まとめに入ったりしないでください。\n` : ""}
 【今回の指示】
 場面${si + 1}「${ch.beats[si]}」を、約${target}字で執筆してください。
 - 直前の本文から自然につなげる。同じ内容を繰り返さない。
@@ -482,7 +484,24 @@ ${chunk}`,
   ];
 }
 
-export function consistencyPrompt(story: Story, ci: number): ChatMessage[] {
+/** 章の中の1場面だけを点検する場合の、その場面より前の本文と、手に入れる品物の注意 */
+function sceneScope(story: Story, ci: number, si: number) {
+  const ch = story.chapters[ci];
+  const scenes = splitScenes(ch.body);
+  const label = isShort(story) ? `場面${si + 1}` : `第${ci + 1}章「${ch.title}」の場面${si + 1}`;
+  const before = scenes.slice(0, si).join("\n\n");
+  const acquire = (ch.acquire ?? []).map((x) =>
+    x.scene > si
+      ? `- 「${x.name}」は、後の場面で初めて手に入れる。この場面で、登場人物が「${x.name}」を持っている・使っている描写がないか(話題にするだけならよい)。`
+      : x.scene === si
+        ? `- 「${x.name}」は、この場面で初めて手に入れる。この場面より前から持っているような描写がないか。また、この場面で実際に「${x.name}」そのものを手に入れているか(手に入れていない、別のものにすり替わっている場合は問題として挙げる)。`
+        : "",
+  );
+  return { label, text: scenes[si] ?? "", before, acquire: acquire.filter(Boolean) };
+}
+
+export function consistencyPrompt(story: Story, ci: number, si?: number): ChatMessage[] {
+  if (si !== undefined) return sceneConsistencyPrompt(story, ci, si);
   const ch = story.chapters[ci];
   const prev = story.chapters
     .slice(0, ci)
@@ -511,6 +530,38 @@ ${ch.body}
 
 見つかった問題だけを issues に列挙してください(最大10件)。
 - quote:本文中の該当箇所を、一字一句そのまま、10〜40字程度で抜き出す(本文中に1回しか現れない部分にする)。
+- problem:何が問題かを簡潔に。
+- replacement:quote を置き換える修正案(quote と同じ範囲を直した文字列)。置き換えで直せない場合は空文字にする。
+問題がなければ issues は空配列にしてください。`,
+    },
+  ];
+}
+
+/** 章の中の1場面だけを、それより前の展開と照らして点検する */
+function sceneConsistencyPrompt(story: Story, ci: number, si: number): ChatMessage[] {
+  const scope = sceneScope(story, ci, si);
+  const prev = story.chapters
+    .slice(0, ci)
+    .map((c, i) => `第${i + 1}章:${c.digest || c.plan}`)
+    .join("\n");
+  const previous = story.shared?.previous;
+  return [
+    { role: "system", content: `あなたは小説の校閲者です。本文と設定資料の矛盾を点検します。出力はJSONのみ。` },
+    {
+      role: "user",
+      content: `【設定資料】
+${bibleToText(story.bible)}
+
+${previous && ci === 0 ? `【前の話までのあらすじ】\n${previous}\n\n` : ""}${prev ? `【これまでの章の要約】\n${prev}\n\n` : ""}${scope.before ? `【この場面より前の本文(参考。点検の対象ではない)】\n${tail(scope.before, 2500)}\n\n` : ""}【点検する本文:${scope.label}】
+${scope.text}
+
+【点検する本文】に、次のような問題がないか点検してください。
+- 設定資料と食い違う人物の名前・呼称・年齢・外見・口調・能力・所持品・地名。
+- それより前の展開や、この場面の中の出来事との時系列・事実の矛盾(死んだはずの人物が登場する、場所や時間の食い違いなど)。
+- 人物の呼び方や一人称の突然のブレ。${scope.acquire.length ? `\n${scope.acquire.join("\n")}` : ""}
+
+見つかった問題だけを issues に列挙してください(最大10件)。参考の本文の中の問題は挙げないでください。
+- quote:【点検する本文】の該当箇所を、一字一句そのまま、10〜40字程度で抜き出す(本文中に1回しか現れない部分にする)。
 - problem:何が問題かを簡潔に。
 - replacement:quote を置き換える修正案(quote と同じ範囲を直した文字列)。置き換えで直せない場合は空文字にする。
 問題がなければ issues は空配列にしてください。`,
@@ -704,8 +755,9 @@ ${opts.episodes.length ? opts.episodes.map((e, i) => `第${i + 1}話「${e.title
 }
 
 /** 決まった括弧で話す人物のセリフが、違う括弧で書かれていないかを点検する */
-export function bracketCheckPrompt(story: Story, ci: number): ChatMessage[] {
+export function bracketCheckPrompt(story: Story, ci: number, si?: number): ChatMessage[] {
   const ch = story.chapters[ci];
+  const body = si === undefined ? ch.body : (splitScenes(ch.body)[si] ?? "");
   const rules = bracketRuleList(story);
   return [
     { role: "system", content: `あなたは小説の校閲者です。セリフの括弧の使い分けを点検します。出力はJSONのみ。` },
@@ -715,7 +767,7 @@ export function bracketCheckPrompt(story: Story, ci: number): ChatMessage[] {
 ${rules.map((r) => `- ${r.name}:${r.bracket}`).join("\n")}
 
 【本文】
-${ch.body}
+${body}
 
 本文の中から、上の人物のセリフなのに、決まりと違う括弧(たとえば『』で書くべきなのに「」)で書かれているものを、すべて挙げてください。
 - 誰のセリフかは、前後の地の文(「〜と竜は言った」など)や会話の流れから判断する。確信が持てないものは挙げない。

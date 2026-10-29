@@ -170,6 +170,7 @@ export function KakuyomuPosts(props: {
   mutate: MutateAnthology;
   start: (t: Task, episode: number) => void;
   running: boolean;
+  settings: Settings;
 }) {
   const { anthology: a, mutate } = props;
   const [message, setMessage] = useState("");
@@ -202,6 +203,10 @@ export function KakuyomuPosts(props: {
 
   return (
     <div className="stack">
+      <Section title="カクヨムの掲載情報(キャッチコピー・紹介文・タグ)">
+        <KakuyomuInfoEditor anthology={a} mutate={mutate} settings={props.settings} />
+      </Section>
+
       <Section
         title="カクヨム投稿用"
         actions={
@@ -212,7 +217,7 @@ export function KakuyomuPosts(props: {
       >
         <p className="muted small-text">
           カクヨムでは、話のタイトルを「章」、各回のサブタイトルを「エピソード」として登録します。1回分の目安は
-          {KAKUYOMU_POST_MIN.toLocaleString()}〜{KAKUYOMU_POST_MAX.toLocaleString()}字です。作品名・キャッチコピー・紹介文・タグは「連載の情報」タブで編集できます。
+          {KAKUYOMU_POST_MIN.toLocaleString()}〜{KAKUYOMU_POST_MAX.toLocaleString()}字です。作品名は「連載の情報」タブで変更できます。
         </p>
         {message && <p className={message.startsWith("保存に失敗") ? "error" : "muted"}>{message}</p>}
         {!total && <p className="muted">まだ本文のある話がありません。</p>}

@@ -1,6 +1,7 @@
 import type { Story } from "../../types";
 import type { RunState } from "../../hooks";
 import type { Task } from "../../lib/pipeline";
+import { sceneProofreadOf } from "../../lib/pipeline";
 import type { Mutate } from "../StoryDetail";
 import { storyChars } from "../../lib/text";
 import { Section } from "../ui";
@@ -41,12 +42,25 @@ export function ProductionTab(props: {
   const locked = running || props.disabled;
   const short = story.form === "short";
 
-  const steps: [string, boolean, string][] = [
-    ["設定資料", story.bible.generated, story.bible.generated ? "作成済み" : "未作成"],
-    ["章構成", story.chapters.length > 0, story.chapters.length ? `${story.chapters.length}章` : "未作成"],
-    ["本文の執筆", story.chapters.length > 0 && written === story.chapters.length, story.chapters.length ? `${written}/${story.chapters.length}章` : "-"],
-    ["校閲・整合性チェック", story.chapters.length > 0 && proofread === story.chapters.length, story.chapters.length ? `${proofread}/${story.chapters.length}章` : "-"],
-  ];
+  // 短編集・連載の話は1章だけなので、構成・執筆・校閲を場面の数で数える
+  const sceneCount = story.chapters.reduce((n, c) => n + c.beats.length, 0);
+  const scenesWritten = story.chapters.reduce((n, c) => n + Math.min(c.sceneDone, c.beats.length), 0);
+  const scenesProofread = story.chapters.reduce((n, c) => n + sceneProofreadOf(c).slice(0, c.beats.length).filter(Boolean).length, 0);
+  const steps: [string, boolean, string][] = short
+    ? [
+        ["設定資料", story.bible.generated, story.bible.generated ? "作成済み" : "未作成"],
+        ["場面構成", sceneCount > 0, sceneCount ? `${sceneCount}場面` : "未作成"],
+        ["本文の執筆", sceneCount > 0 && scenesWritten === sceneCount, sceneCount ? `${scenesWritten}/${sceneCount}場面` : "-"],
+        ["校閲・整合性チェック", sceneCount > 0 && scenesProofread === sceneCount, sceneCount ? `${scenesProofread}/${sceneCount}場面` : "-"],
+      ]
+    : [
+        ["設定資料", story.bible.generated, story.bible.generated ? "作成済み" : "未作成"],
+        ["章構成", story.chapters.length > 0, story.chapters.length ? `${story.chapters.length}章` : "未作成"],
+        ["本文の執筆", story.chapters.length > 0 && written === story.chapters.length, story.chapters.length ? `${written}/${story.chapters.length}章` : "-"],
+        ["校閲・整合性チェック", story.chapters.length > 0 && proofread === story.chapters.length, story.chapters.length ? `${proofread}/${story.chapters.length}章` : "-"],
+      ];
+  const outlineName = short ? "場面構成" : "章構成";
+  const unit = short ? "場面" : "章";
 
   return (
     <div className="stack">
@@ -61,7 +75,7 @@ export function ProductionTab(props: {
         {short ? (
           <p className="muted">
             目標の長さ:約 {total.toLocaleString()} 字(1話完結)。現在 {storyChars(story).toLocaleString()} 字。
-            場面数は、次に構成を作成(作り直し)するときに反映されます。
+            場面数は、次に場面構成を作成(作り直し)するときに反映されます。
           </p>
         ) : (
           <p className="muted">
@@ -96,7 +110,7 @@ export function ProductionTab(props: {
         </ol>
         <p className="muted small-text">
           {short
-            ? "設定資料 → 構成 → 場面ごとの執筆 → 設定資料への反映 → 校閲・整合性チェックの順に進みます。この話の設定資料だけを参照するので、他の話の内容には影響されません。途中で停止しても、続きから再開できます。"
+            ? "設定資料 → 場面構成 → 場面ごとの執筆 → 設定資料への反映 → 場面ごとの校閲・整合性チェックの順に進みます。この話の設定資料だけを参照するので、他の話の内容には影響されません。途中で停止しても、続きから再開できます。"
             : "設定資料 → 章構成 → 場面ごとの執筆(章ごとに設定資料へ反映)→ 校閲・整合性チェックの順に進みます。1冊分の生成には長い時間がかかります。途中で停止しても、進捗は保存され続きから再開できます。"}
         </p>
 
@@ -129,22 +143,22 @@ export function ProductionTab(props: {
           </button>
           <button
             disabled={locked || !story.bible.generated}
-            onClick={() => confirmThen(story.chapters.length > 0, "章構成を作り直します。既存の本文はすべて失われます。", () => props.start({ kind: "outline" }))}
+            onClick={() => confirmThen(story.chapters.length > 0, `${outlineName}を作り直します。既存の本文はすべて失われます。`, () => props.start({ kind: "outline" }))}
           >
-            章構成を{story.chapters.length ? "作り直す" : "作成"}
+            {outlineName}を{story.chapters.length ? "作り直す" : "作成"}
           </button>
-          <button disabled={locked || written === 0} onClick={() => props.start({ kind: "proofread", index: "all" })}>
-            全章を校閲し直す
+          <button disabled={locked || (short ? scenesWritten === 0 : written === 0)} onClick={() => props.start({ kind: "proofread", index: "all" })}>
+            全{unit}を校閲し直す
           </button>
           <button
-            disabled={locked || written === 0}
+            disabled={locked || (short ? scenesWritten === 0 : written === 0)}
             title="漢数字と算用数字の混在を、設定画面の「数字の表記」に合わせて統一します(すぐ終わります)"
             onClick={() => props.start({ kind: "numbers", index: "all" })}
           >
-            全章の数字を統一
+            全{unit}の数字を統一
           </button>
         </div>
-        <p className="muted small-text">章ごとの再生成・校閲は「本文」タブから行えます。</p>
+        <p className="muted small-text">{unit}ごとの再生成・校閲は「本文」タブから行えます。</p>
       </Section>
     </div>
   );

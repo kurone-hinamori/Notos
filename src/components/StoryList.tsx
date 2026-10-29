@@ -7,7 +7,8 @@ export function StoryList(props: {
   /** novel: 長編の一覧、anthology: 短編集の一覧 */
   kind: "novel" | "anthology" | "serial";
   onOpen: (id: string, tab?: string) => void;
-  onNew: () => void;
+  /** 新しく作る(作成済みのものを閲覧するだけの一覧では渡さない) */
+  onNew?: () => void;
   onDuplicate?: (id: string) => void;
   /** 削除する(開いている物語の場合は、その状態も片付ける) */
   onDelete: (id: string) => Promise<void>;
@@ -55,23 +56,27 @@ export function StoryList(props: {
   return (
     <div className="page">
       <header className="page-head">
-        <h2>{serial ? "連載の一覧" : anthology ? "短編集の一覧" : "物語の一覧"}</h2>
+        <h2>{serial ? "連載の一覧" : anthology ? "短編集の一覧" : "長編の一覧"}</h2>
         <div className="row">
           <input className="search" placeholder="タイトル・キーワードで検索" value={query} onChange={(e) => setQuery(e.target.value)} />
-          <button className="primary" onClick={props.onNew}>
-            ＋ 新しい{noun}
-          </button>
+          {props.onNew && (
+            <button className="primary" onClick={props.onNew}>
+              ＋ 新しい{noun}
+            </button>
+          )}
         </div>
       </header>
       {error && <p className="error">{error}</p>}
       {items && items.length === 0 && (
         <div className="empty">
           <p>まだ{noun}がありません。</p>
-          {anthology && !serial && <p>短編集では、1話ずつガチャで概要を決めて、1話完結の短編を書いていきます。</p>}
+
           {serial && <p>カクヨム連載では、話(章)ごとに4回分の連載を書き、各回にサブタイトルを付けます。</p>}
-          <button className="primary" onClick={props.onNew}>
-            最初の{noun}を作る
-          </button>
+          {props.onNew && (
+            <button className="primary" onClick={props.onNew}>
+              最初の{noun}を作る
+            </button>
+          )}
         </div>
       )}
       <div className="grid">

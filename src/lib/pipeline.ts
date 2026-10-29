@@ -36,7 +36,23 @@ import {
   subtitlesSchema,
 } from "./schemas";
 import { normalizeNumbers } from "./numbers";
-import { cleanProse, countChars, decodeByteTokens, hasLine, lineBracket, lineBracketOk, lineQuoted, joinScenes, lineCore, linePos, sameName, splitChunks, tail } from "./text";
+import {
+  cleanProse,
+  countChars,
+  decodeByteTokens,
+  hasLine,
+  lineBracket,
+  lineBracketOk,
+  lineQuoted,
+  joinScenes,
+  lineCore,
+  linePos,
+  replaceScene,
+  sameName,
+  splitChunks,
+  splitScenes,
+  tail,
+} from "./text";
 
 /** パイプラインが物語を読み書きするための窓口(UI 側が保存を担当する)。 */
 export interface Ctx {
@@ -54,13 +70,42 @@ export type Task =
   | { kind: "bible" }
   | { kind: "outline" }
   | { kind: "subtitles" }
-  | { kind: "numbers"; index: number | "all" }
-  | { kind: "brackets"; index: number }
+  | { kind: "numbers"; index: number | "all"; scene?: number }
+  | { kind: "brackets"; index: number; scene?: number }
   | { kind: "chapter"; index: number }
-  | { kind: "proofread"; index: number | "all" };
+  /** 書き終えた場面を書き直す */
+  | { kind: "scene"; index: number; scene: number }
+  /** scene を指定すると、その場面だけを校閲する */
+  | { kind: "proofread"; index: number | "all"; scene?: number };
 
 function throwIfAborted(ctx: Ctx) {
   if (ctx.signal.aborted) throw new DOMException("中断しました", "AbortError");
+}
+
+/** 短編集・連載の話(1章だけの短編)は、執筆も校閲も場面ごとに行う */
+const sceneMode = (s: Story) => s.form === "short";
+
+/** 章全体(si 未指定)、または章の中の1場面の本文 */
+function scopeText(s: Story, ci: number, si?: number): string {
+  const body = s.chapters[ci].body;
+  return si === undefined ? body : (splitScenes(body)[si] ?? "");
+}
+
+function setScopeText(s: Story, ci: number, si: number | undefined, text: string) {
+  const ch = s.chapters[ci];
+  ch.body = si === undefined ? text : replaceScene(ch.body, si, text);
+}
+
+/** ログなどに出す、章・場面の呼び方 */
+export function scopeLabel(s: Story, ci: number, si?: number): string {
+  if (si === undefined) return `第${ci + 1}章`;
+  return sceneMode(s) ? `場面${si + 1}` : `第${ci + 1}章 場面${si + 1}`;
+}
+
+/** 場面ごとの校閲済みかどうか(場面ごとに校閲する前のデータは、章の校閲済みに従う) */
+export function sceneProofreadOf(ch: Chapter): boolean[] {
+  const n = Math.max(ch.beats.length, splitScenes(ch.body).length);
+  return Array.from({ length: n }, (_, i) => ch.sceneProofread?.[i] ?? ch.proofread);
 }
 
 // ---------------------------------------------------------------- 企画(ガチャ)
@@ -186,7 +231,7 @@ export async function summarizeCastChanges(ctx: Ctx, names: string[]): Promise<{
 // ---------------------------------------------------------------- 章構成
 
 async function stepOutline(ctx: Ctx) {
-  ctx.stage("章構成を作成中");
+  ctx.stage(sceneMode(ctx.get()) ? "場面構成を作成中" : "章構成を作成中");
   const plan: BookPlan = ctx.get().plan;
   const raw = await chatJson<{
     chapters: { title: string; plan: string; beats: string[] }[];
@@ -233,7 +278,7 @@ async function stepOutline(ctx: Ctx) {
   for (const c of ctx.get().chapters) {
     for (const x of c.acquire ?? []) ctx.log(`「${x.name}」は場面${x.scene + 1}で手に入れます`);
   }
-  ctx.log(`全${chapters.length}章の構成を作成しました`);
+  ctx.log(sceneMode(ctx.get()) ? `全${chapters[0].beats.length}場面の構成を作成しました` : `全${chapters.length}章の構成を作成しました`);
   // カクヨム連載では、場面(=連載1回分)ごとにサブタイトルを付ける
   if (ctx.get().shared?.serial) await stepSubtitles(ctx);
 }
@@ -400,6 +445,15 @@ function previousTail(story: Story, ci: number): string {
 
 async function writeScene(ctx: Ctx, ci: number, si: number) {
   const { settings } = ctx;
+  const label = scopeLabel(ctx.get(), ci, si);
+  // 書き終えた場面の書き直し:前後の場面はそのまま残し、その間につながるように書く
+  const rewrite = si < ctx.get().chapters[ci].sceneDone;
+  const around = (story: Story) => {
+    const scenes = splitScenes(story.chapters[ci].body);
+    const before = si > 0 ? tail(scenes[si - 1] ?? "", 900) : ci > 0 ? previousTail(story, ci - 1) : "";
+    const after = scenes[si + 1] ?? (story.chapters[ci + 1]?.body ? splitScenes(story.chapters[ci + 1].body)[0] : "");
+    return { before, after: after ? after.slice(0, 400) + (after.length > 400 ? "…" : "") : "" };
+  };
   const target = ctx.get().plan.charsPerScene;
   // この場面で使うと決めたセリフ(上から順)と、後の場面で使うのでこの場面ではまだ使わないセリフ
   const lines = (ctx.get().chapters[ci].lines ?? []).filter((l) => l.scene === si).map((l) => l.text);
@@ -417,8 +471,9 @@ async function writeScene(ctx: Ctx, ci: number, si: number) {
         ci,
         si,
         target: pass === 0 ? target : Math.max(600, target - countChars(scene)),
-        previousTail: scene ? tail(scene, 900) : previousTail(story, ci),
+        previousTail: scene ? tail(scene, 900) : rewrite ? around(story).before : previousTail(story, ci),
         existingInScene: scene || undefined,
+        nextHead: rewrite ? around(story).after || undefined : undefined,
         lines: lines.filter((l) => !hasLine(scene, l)),
         later,
       }),
@@ -440,7 +495,7 @@ async function writeScene(ctx: Ctx, ci: number, si: number) {
     const v = lineViolations(scene, lines, later);
     if (!v.total) break;
     throwIfAborted(ctx);
-    ctx.stage(`第${ci + 1}章 場面${si + 1} の指定のセリフを直しています`);
+    ctx.stage(`${label} の指定のセリフを直しています`);
     const raw = await chat(settings, {
       messages: insertLinePrompt(ctx.get(), scene, [...v.missing, ...v.wrongBracket], lines, v.early),
       signal: ctx.signal,
@@ -453,17 +508,25 @@ async function writeScene(ctx: Ctx, ci: number, si: number) {
     if (cand && better && cand.length > scene.length * 0.8 && cand.length < scene.length * 1.6) scene = cand;
   }
   const left = lineViolations(scene, lines, later);
-  if (left.missing.length) ctx.log(`第${ci + 1}章 場面${si + 1}:指定のセリフを入れられませんでした(${left.missing.join(" / ")})`);
-  if (left.outOfOrder) ctx.log(`第${ci + 1}章 場面${si + 1}:指定のセリフの順番を直せませんでした`);
-  if (left.wrongBracket.length) ctx.log(`第${ci + 1}章 場面${si + 1}:指定と違う括弧で書かれたセリフがあります(${left.wrongBracket.join(" / ")})`);
-  if (left.early.length) ctx.log(`第${ci + 1}章 場面${si + 1}:後の場面のセリフを先に使っています(${left.early.join(" / ")})`);
+  if (left.missing.length) ctx.log(`${label}:指定のセリフを入れられませんでした(${left.missing.join(" / ")})`);
+  if (left.outOfOrder) ctx.log(`${label}:指定のセリフの順番を直せませんでした`);
+  if (left.wrongBracket.length) ctx.log(`${label}:指定と違う括弧で書かれたセリフがあります(${left.wrongBracket.join(" / ")})`);
+  if (left.early.length) ctx.log(`${label}:後の場面のセリフを先に使っています(${left.early.join(" / ")})`);
 
   ctx.update((s) => {
     const ch = s.chapters[ci];
-    ch.body = joinScenes(ch.body, scene);
-    ch.sceneDone = si + 1;
+    const done = sceneProofreadOf(ch);
+    done[si] = false;
+    ch.sceneProofread = done;
     ch.proofread = false;
-    ch.issues = [];
+    if (rewrite) {
+      ch.body = replaceScene(ch.body, si, scene);
+      ch.issues = ch.issues.filter((x) => x.scene !== si);
+    } else {
+      ch.body = joinScenes(ch.body, scene);
+      ch.sceneDone = si + 1;
+      ch.issues = [];
+    }
   });
 }
 
@@ -543,9 +606,11 @@ async function stepChapter(ctx: Ctx, ci: number) {
     const ch = ctx.get().chapters[ci];
     if (ch.sceneDone >= ch.beats.length) break;
     const si = ch.sceneDone;
-    ctx.stage(`第${ci + 1}章「${ch.title}」 場面 ${si + 1}/${ch.beats.length} を執筆中`);
+    ctx.stage(
+      sceneMode(ctx.get()) ? `場面 ${si + 1}/${ch.beats.length} を執筆中` : `第${ci + 1}章「${ch.title}」 場面 ${si + 1}/${ch.beats.length} を執筆中`,
+    );
     await writeScene(ctx, ci, si);
-    ctx.log(`第${ci + 1}章 場面${si + 1} を執筆しました`);
+    ctx.log(`${scopeLabel(ctx.get(), ci, si)} を執筆しました`);
   }
   if (!ctx.get().chapters[ci].digest) {
     ctx.stage(`第${ci + 1}章の要約を作成中`);
@@ -557,15 +622,16 @@ async function stepChapter(ctx: Ctx, ci: number) {
 
 // ---------------------------------------------------------------- 校閲
 
-async function proofreadBody(ctx: Ctx, ci: number): Promise<number> {
-  const body = ctx.get().chapters[ci].body;
+async function proofreadBody(ctx: Ctx, ci: number, si?: number): Promise<number> {
+  const body = scopeText(ctx.get(), ci, si);
+  const label = scopeLabel(ctx.get(), ci, si);
   const chunks = splitChunks(body);
   const out: string[] = [];
   let changed = 0;
   const required = ctx.get().lines ?? [];
   for (let i = 0; i < chunks.length; i++) {
     throwIfAborted(ctx);
-    ctx.stage(`第${ci + 1}章を校閲中 (${i + 1}/${chunks.length})`);
+    ctx.stage(`${label}を校閲中 (${i + 1}/${chunks.length})`);
     const original = chunks[i];
     let fixed = original;
     // このかたまりに入っている指定のセリフは、校閲で書き換えさせない
@@ -592,9 +658,7 @@ async function proofreadBody(ctx: Ctx, ci: number): Promise<number> {
   }
   // 場面区切りの空行を保つため、元の空行構造を再現する
   const joined = restoreBlankLines(body, out);
-  ctx.update((s) => {
-    s.chapters[ci].body = joined;
-  });
+  ctx.update((s) => setScopeText(s, ci, si, joined));
   return changed;
 }
 
@@ -612,10 +676,12 @@ function restoreBlankLines(original: string, chunks: string[]): string {
   return result.join("\n");
 }
 
-async function checkConsistency(ctx: Ctx, ci: number) {
-  ctx.stage(`第${ci + 1}章の設定整合性を点検中`);
+async function checkConsistency(ctx: Ctx, ci: number, si?: number) {
+  const label = scopeLabel(ctx.get(), ci, si);
+  const unit = si === undefined ? "章" : "場面";
+  ctx.stage(`${label}の設定整合性を点検中`);
   const r = await chatJson<{ issues: { quote: string; problem: string; replacement: string }[] }>(ctx.settings, {
-    messages: consistencyPrompt(ctx.get(), ci),
+    messages: consistencyPrompt(ctx.get(), ci, si),
     schema: issuesSchema,
     signal: ctx.signal,
     numPredict: 3000,
@@ -624,36 +690,41 @@ async function checkConsistency(ctx: Ctx, ci: number) {
   let applied = 0;
   ctx.update((s) => {
     const ch = s.chapters[ci];
+    // 点検する範囲(章全体、または1場面)の本文。修正は範囲の中だけに適用する
+    let body = scopeText(s, ci, si);
     const issues: Issue[] = [];
     for (const it of r.issues ?? []) {
       const quote = it.quote?.trim();
       if (!quote || !it.problem?.trim()) continue;
       const replacement = it.replacement?.trim() ?? "";
-      const occurrences = ch.body.split(quote).length - 1;
-      const fixedBody = ch.body.replace(quote, () => replacement);
+      const occurrences = body.split(quote).length - 1;
+      const fixedBody = body.replace(quote, () => replacement);
       // 指定のセリフを書き換えてしまう修正は自動では適用しない
-      const keepsLines = (s.lines ?? []).every((l) => !hasLine(ch.body, l) || hasLine(fixedBody, l));
+      const keepsLines = (s.lines ?? []).every((l) => !hasLine(body, l) || hasLine(fixedBody, l));
       const canApply = occurrences === 1 && replacement !== "" && replacement !== quote && keepsLines;
       if (canApply) {
-        ch.body = fixedBody;
+        body = fixedBody;
         applied++;
       }
       issues.push({ quote, problem: it.problem.trim(), replacement, applied: canApply });
     }
-    // この章で使うと決めたセリフが本文に入っていなければ、指摘として残す
-    for (const l of ch.lines ?? []) {
-      if (!hasLine(ch.body, l.text)) {
+    setScopeText(s, ci, si, body);
+    // この範囲で使うと決めたセリフ
+    const mine = (ch.lines ?? []).filter((l) => si === undefined || l.scene === si);
+    // 使うと決めたセリフが本文に入っていなければ、指摘として残す
+    for (const l of mine) {
+      if (!hasLine(body, l.text)) {
         issues.push({
           quote: "",
-          problem: `指定したセリフ「${lineCore(l.text)}」が本文に入っていません(場面${l.scene + 1}で使う予定でした)。本文に書き足すか、この章を再生成してください。`,
+          problem: `指定したセリフ「${lineCore(l.text)}」が本文に入っていません(場面${l.scene + 1}で使う予定でした)。本文に書き足すか、この${unit}を再生成してください。`,
           replacement: "",
           applied: false,
         });
       }
     }
     // 指定した括弧(『』【】など)と違う括弧で書かれていないか
-    for (const l of ch.lines ?? []) {
-      if (hasLine(ch.body, l.text) && lineBracketOk(ch.body, l.text) === false) {
+    for (const l of mine) {
+      if (hasLine(body, l.text) && lineBracketOk(body, l.text) === false) {
         issues.push({
           quote: lineCore(l.text),
           problem: `指定したセリフ「${lineCore(l.text)}」が、指定とは違う括弧で書かれています(指定:${lineQuoted(l.text)})。`,
@@ -664,56 +735,80 @@ async function checkConsistency(ctx: Ctx, ci: number) {
     }
     // 指定したセリフが上から順に登場しているか
     const order = s.lines ?? [];
-    const used = (ch.lines ?? [])
-      .map((l) => ({ text: l.text, at: linePos(ch.body, l.text), rank: order.indexOf(l.text) }))
+    const used = mine
+      .map((l) => ({ text: l.text, at: linePos(body, l.text), rank: order.indexOf(l.text) }))
       .filter((x) => x.at >= 0)
       .sort((x, y) => x.at - y.at);
     for (let k = 1; k < used.length; k++) {
       if (used[k].rank < used[k - 1].rank) {
         issues.push({
           quote: "",
-          problem: `指定したセリフの順番が入れ替わっています。「${lineCore(used[k].text)}」が「${lineCore(used[k - 1].text)}」より後に出てきます。本文を直すか、この章を再生成してください。`,
+          problem: `指定したセリフの順番が入れ替わっています。「${lineCore(used[k].text)}」が「${lineCore(used[k - 1].text)}」より後に出てきます。本文を直すか、この${unit}を再生成してください。`,
           replacement: "",
           applied: false,
         });
       }
     }
-    ch.issues = issues;
+    if (si === undefined) ch.issues = issues;
+    else {
+      // 他の場面の指摘は残す。場面ごとに校閲する前の指摘のうち、この場面のものは置き換える
+      const stale = (x: Issue) =>
+        x.scene === si || (x.scene === undefined && (!x.quote || body.includes(x.quote) || (!!x.replacement && body.includes(x.replacement))));
+      ch.issues = [...ch.issues.filter((x) => !stale(x)), ...issues.map((x) => ({ ...x, scene: si }))];
+    }
   });
-  if (applied) ctx.log(`第${ci + 1}章:矛盾・表記の問題 ${applied} 件を自動修正しました`);
+  if (applied) ctx.log(`${label}:矛盾・表記の問題 ${applied} 件を自動修正しました`);
 }
 
-async function stepProofread(ctx: Ctx, ci: number) {
-  const ch = ctx.get().chapters[ci];
-  if (!ch.body) return;
-  const changed = await proofreadBody(ctx, ci);
-  unifyNumbers(ctx, ci);
-  const fixedBrackets = await checkBrackets(ctx, ci);
-  await checkConsistency(ctx, ci);
+async function stepProofread(ctx: Ctx, ci: number, si?: number) {
+  if (!scopeText(ctx.get(), ci, si).trim()) return;
+  const changed = await proofreadBody(ctx, ci, si);
+  unifyNumbers(ctx, ci, si);
+  const fixedBrackets = await checkBrackets(ctx, ci, si);
+  await checkConsistency(ctx, ci, si);
   // 括弧を付け替えた記録は、整合性チェックの指摘(「修正済み」)として残す
   if (fixedBrackets.length) ctx.update((s) => void s.chapters[ci].issues.push(...fixedBrackets));
   ctx.update((s) => {
-    s.chapters[ci].proofread = true;
+    const ch = s.chapters[ci];
+    if (si === undefined) {
+      ch.proofread = true;
+      delete ch.sceneProofread;
+    } else {
+      const done = sceneProofreadOf(ch);
+      done[si] = true;
+      ch.sceneProofread = done;
+      ch.proofread = done.every(Boolean);
+    }
   });
-  ctx.log(`第${ci + 1}章を校閲しました(修正:${changed}箇所)`);
+  ctx.log(`${scopeLabel(ctx.get(), ci, si)}を校閲しました(修正:${changed}箇所)`);
+}
+
+/** 章を校閲する。短編集・連載の話は場面ごとに校閲する(pendingOnly: まだ校閲していない場面だけ) */
+async function proofreadChapter(ctx: Ctx, ci: number, pendingOnly: boolean) {
+  if (!sceneMode(ctx.get())) return stepProofread(ctx, ci);
+  // 章全体で校閲していたころの指摘は、場面ごとの指摘に置き換える
+  if (!pendingOnly) ctx.update((s) => void (s.chapters[ci].issues = s.chapters[ci].issues.filter((x) => x.scene !== undefined)));
+  const n = splitScenes(ctx.get().chapters[ci].body).length;
+  for (let si = 0; si < n; si++) {
+    if (!pendingOnly || !sceneProofreadOf(ctx.get().chapters[ci])[si]) await stepProofread(ctx, ci, si);
+  }
 }
 
 /**
  * 数字の表記(漢数字/算用数字)を設定に合わせて統一する。規則による変換なので LLM は使わない。
  * 使ってほしいセリフの中の数字は変えない。
  */
-function unifyNumbers(ctx: Ctx, ci: number): number {
+function unifyNumbers(ctx: Ctx, ci: number, si?: number): number {
   const style = ctx.settings.numberStyle ?? "kanji";
+  const label = scopeLabel(ctx.get(), ci, si);
   // あわせて、モデルがバイトのまま出力した文字(<0xE3><0x80><0x80> など)を本来の文字に戻す
-  const bytes = decodeByteTokens(ctx.get().chapters[ci].body);
+  const bytes = decodeByteTokens(scopeText(ctx.get(), ci, si));
   const protect = (ctx.get().lines ?? []).map(lineCore);
   const r = normalizeNumbers(bytes.text, style, protect);
   if (!r.count && !bytes.count) return 0;
-  ctx.update((s) => {
-    s.chapters[ci].body = r.text;
-  });
-  if (bytes.count) ctx.log(`第${ci + 1}章:文字化けしていた文字を${bytes.count}箇所直しました`);
-  if (r.count) ctx.log(`第${ci + 1}章:数字の表記を${style === "kanji" ? "漢数字" : "算用数字"}に統一しました(${r.count}箇所)`);
+  ctx.update((s) => setScopeText(s, ci, si, r.text));
+  if (bytes.count) ctx.log(`${label}:文字化けしていた文字を${bytes.count}箇所直しました`);
+  if (r.count) ctx.log(`${label}:数字の表記を${style === "kanji" ? "漢数字" : "算用数字"}に統一しました(${r.count}箇所)`);
   return r.count + bytes.count;
 }
 
@@ -721,12 +816,13 @@ function unifyNumbers(ctx: Ctx, ci: number): number {
  * 『』など決まった括弧で話す人物のセリフが、違う括弧で書かれていれば括弧だけを付け替える。
  * 誰のセリフかの判断は LLM に任せ、付け替えは本文中に1か所だけある場合に限って機械的に行う(セリフの文字は変えない)。
  */
-async function checkBrackets(ctx: Ctx, ci: number): Promise<Issue[]> {
+async function checkBrackets(ctx: Ctx, ci: number, si?: number): Promise<Issue[]> {
   const rules = bracketRuleList(ctx.get());
-  if (!rules.length || !ctx.get().chapters[ci].body.trim()) return [];
-  ctx.stage(`第${ci + 1}章のセリフの括弧を点検中`);
+  const label = scopeLabel(ctx.get(), ci, si);
+  if (!rules.length || !scopeText(ctx.get(), ci, si).trim()) return [];
+  ctx.stage(`${label}のセリフの括弧を点検中`);
   const r = await chatJson<{ lines: { speaker: string; text: string }[] }>(ctx.settings, {
-    messages: bracketCheckPrompt(ctx.get(), ci),
+    messages: bracketCheckPrompt(ctx.get(), ci, si),
     schema: bracketCheckSchema,
     signal: ctx.signal,
     numPredict: 2048,
@@ -737,7 +833,7 @@ async function checkBrackets(ctx: Ctx, ci: number): Promise<Issue[]> {
   const specified = new Set((ctx.get().lines ?? []).filter((l) => lineBracket(l)).map(lineCore));
   const fixed: Issue[] = [];
   ctx.update((s) => {
-    const ch = s.chapters[ci];
+    let body = scopeText(s, ci, si);
     for (const it of r.lines ?? []) {
       const text = it.text?.trim();
       const rule = rules.find((x) => sameName(x.name, it.speaker ?? ""));
@@ -746,15 +842,22 @@ async function checkBrackets(ctx: Ctx, ci: number): Promise<Issue[]> {
       for (const open of Object.keys(CLOSE)) {
         if (open === want) continue;
         const wrong = `${open}${text}${CLOSE[open]}`;
-        if (ch.body.split(wrong).length - 1 !== 1) continue;
+        if (body.split(wrong).length - 1 !== 1) continue;
         const right = `${want}${text}${CLOSE[want]}`;
-        ch.body = ch.body.replace(wrong, () => right);
-        fixed.push({ quote: wrong, problem: `${rule.name}のセリフは${rule.bracket}で書く決まりなので、括弧を付け替えました。`, replacement: right, applied: true });
+        body = body.replace(wrong, () => right);
+        fixed.push({
+          quote: wrong,
+          problem: `${rule.name}のセリフは${rule.bracket}で書く決まりなので、括弧を付け替えました。`,
+          replacement: right,
+          applied: true,
+          ...(si === undefined ? {} : { scene: si }),
+        });
         break;
       }
     }
+    setScopeText(s, ci, si, body);
   });
-  if (fixed.length) ctx.log(`第${ci + 1}章:セリフの括弧を${fixed.length}箇所付け替えました`);
+  if (fixed.length) ctx.log(`${label}:セリフの括弧を${fixed.length}箇所付け替えました`);
   return fixed;
 }
 
@@ -765,6 +868,7 @@ function resetChapter(ch: Chapter) {
   ch.sceneDone = 0;
   ch.digest = "";
   ch.proofread = false;
+  delete ch.sceneProofread;
   ch.issues = [];
 }
 
@@ -774,7 +878,7 @@ export async function runTask(ctx: Ctx, task: Task): Promise<void> {
       await stepBible(ctx);
       return;
     case "brackets": {
-      const fixed = await checkBrackets(ctx, task.index);
+      const fixed = await checkBrackets(ctx, task.index, task.scene);
       if (fixed.length) ctx.update((s) => void s.chapters[task.index].issues.push(...fixed));
       else ctx.log("括弧の付け替えが必要なセリフはありませんでした");
       return;
@@ -782,7 +886,7 @@ export async function runTask(ctx: Ctx, task: Task): Promise<void> {
     case "numbers": {
       const indices = task.index === "all" ? ctx.get().chapters.map((_, i) => i) : [task.index];
       let total = 0;
-      for (const i of indices) total += unifyNumbers(ctx, i);
+      for (const i of indices) total += unifyNumbers(ctx, i, task.scene);
       if (!total) ctx.log("数字の表記は統一されていました");
       return;
     }
@@ -796,12 +900,30 @@ export async function runTask(ctx: Ctx, task: Task): Promise<void> {
       ctx.update((s) => resetChapter(s.chapters[task.index]));
       await stepChapter(ctx, task.index);
       return;
+    case "scene": {
+      const ci = task.index;
+      ctx.stage(`${scopeLabel(ctx.get(), ci, task.scene)} を書き直し中`);
+      ctx.update((s) => assignLines(s));
+      await writeScene(ctx, ci, task.scene);
+      ctx.log(`${scopeLabel(ctx.get(), ci, task.scene)} を書き直しました`);
+      // 章の要約は後の執筆や経緯の更新で使うので、書き直した内容で作り直す
+      const ch = ctx.get().chapters[ci];
+      if (ch.digest && ch.sceneDone >= ch.beats.length) {
+        ctx.stage("要約を作り直し中");
+        await stepDigest(ctx, ci);
+      }
+      return;
+    }
     case "proofread": {
+      if (task.index !== "all" && task.scene !== undefined) {
+        await stepProofread(ctx, task.index, task.scene);
+        return;
+      }
       const indices =
         task.index === "all"
           ? ctx.get().chapters.map((_, i) => i).filter((i) => ctx.get().chapters[i].body)
           : [task.index];
-      for (const i of indices) await stepProofread(ctx, i);
+      for (const i of indices) await proofreadChapter(ctx, i, false);
       return;
     }
     case "all": {
@@ -812,7 +934,7 @@ export async function runTask(ctx: Ctx, task: Task): Promise<void> {
       if (!ctx.get().chapters.length) await stepOutline(ctx);
       for (let i = 0; i < ctx.get().chapters.length; i++) await stepChapter(ctx, i);
       for (let i = 0; i < ctx.get().chapters.length; i++) {
-        if (!ctx.get().chapters[i].proofread) await stepProofread(ctx, i);
+        if (!ctx.get().chapters[i].proofread) await proofreadChapter(ctx, i, true);
       }
       ctx.update((s) => {
         s.status = "done";

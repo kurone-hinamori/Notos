@@ -1,7 +1,7 @@
 import type { Anthology, CharacterSheet, Concept, Entry, EntryKind, SharedCharacter, SharedContext, SharedEntry, Story } from "../types";
 import { emptyBible } from "../types";
 import type { ConceptRequest } from "./prompts";
-import { newId, sameName, tail as tailOf } from "./text";
+import { newId, sameName, splitScenes, tail as tailOf } from "./text";
 
 export const ENTRY_KINDS: EntryKind[] = ["places", "items", "terms"];
 export const ENTRY_LABEL: Record<EntryKind, string> = { places: "場所", items: "品物", terms: "用語" };
@@ -14,8 +14,7 @@ export const isSeries = (a: Anthology) => a.mode === "series" || isKakuyomu(a);
 export function postsOf(e: Story): { title: string; body: string }[] {
   const ch = e.chapters[0];
   if (!ch?.body.trim()) return [];
-  const bodies = ch.body.split(/\n\s*\n/).map((b) => b.trim()).filter(Boolean);
-  return bodies.map((body, i) => ({ title: ch.sceneTitles?.[i] ?? "", body }));
+  return splitScenes(ch.body).map((body, i) => ({ title: ch.sceneTitles?.[i] ?? "", body }));
 }
 
 /** 話に出演する共通の登場人物 */

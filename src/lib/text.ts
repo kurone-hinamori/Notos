@@ -44,6 +44,22 @@ export function joinScenes(existing: string, scene: string): string {
   return existing ? `${existing}\n\n${scene}` : scene;
 }
 
+/** 本文を場面(空行で区切られたかたまり)ごとに分ける */
+export function splitScenes(body: string): string[] {
+  return body
+    .split(/\n\s*\n/)
+    .map((s) => s.trim())
+    .filter(Boolean);
+}
+
+/** 本文の si 番目の場面を置き換える(場面がまだなければ末尾に足す) */
+export function replaceScene(body: string, si: number, text: string): string {
+  const scenes = splitScenes(body);
+  if (si < scenes.length) scenes[si] = text.trim();
+  else scenes.push(text.trim());
+  return scenes.filter(Boolean).join("\n\n");
+}
+
 export function tail(text: string, n: number): string {
   return text.length <= n ? text : "…" + text.slice(text.length - n);
 }

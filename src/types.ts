@@ -61,6 +61,8 @@ export interface Issue {
   applied: boolean;
   /** 利用者による扱い。done: 対応済み、ignored: 無視(誤検出など) */
   state?: "done" | "ignored";
+  /** 場面ごとに校閲した場合の、指摘のある場面(0始まり)。未設定は章全体の指摘 */
+  scene?: number;
 }
 
 export interface Chapter {
@@ -75,6 +77,8 @@ export interface Chapter {
   /** 章の要約(以降の章の執筆時に前提として渡す) */
   digest: string;
   proofread: boolean;
+  /** 場面ごとに校閲した場合の、場面ごとの校閲済みかどうか。未設定の場面は proofread に従う */
+  sceneProofread?: boolean[];
   issues: Issue[];
   /** この章で使うセリフと、使う場面(0始まり) */
   lines?: { text: string; scene: number }[];
