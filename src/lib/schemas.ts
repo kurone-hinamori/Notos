@@ -20,6 +20,7 @@ const characterSheet = obj({
   speech: str,
   background: str,
   relations: str,
+  bracket: { type: "string", enum: ["「」", "『』", "【】"] },
 });
 
 const entry = obj({ name: str, description: str });
@@ -86,3 +87,8 @@ export const subtitlesSchema = obj({ titles: arr(str) });
 
 /** カクヨム連載:キャッチコピー・紹介文・タグ */
 export const kakuyomuSchema = obj({ catchcopy: str, introduction: str, tags: arr(str) });
+
+/** 決まった括弧で話す人物のセリフのうち、違う括弧で書かれているもの */
+export const bracketCheckSchema = obj({
+  lines: arr(obj({ speaker: str, text: str })),
+});

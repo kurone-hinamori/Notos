@@ -646,7 +646,15 @@ function InfoTab({ anthology: a, mutate, settings }: { anthology: Anthology; mut
       <Section title="共通の登場人物">
         <CastEditor
           cast={a.cast ?? []}
-          onChange={(fn) => mutate((d) => void (d.cast = fn(d.cast ?? [])))}
+          onChange={(fn) =>
+            mutate((d) => {
+              d.cast = fn(d.cast ?? []);
+              // セリフの括弧は、作成済みの各話の設定資料にも反映する(校閲の括弧の点検で使うため)
+              for (const c of d.cast)
+                for (const e of d.episodes)
+                  for (const x of e.bible.characters) if (sameName(x.name, c.name)) x.bracket = c.bracket;
+            })
+          }
           settings={settings}
           context={{ title: a.title, keywords: a.keywords, note: a.note, world: a.world ?? "" }}
           onWorld={(w) => mutate((d) => void (d.world = w))}

@@ -25,7 +25,12 @@ export interface CharacterSheet {
   relations: string;
   /** 本文の執筆中に判明した追加情報 */
   notes: string;
+  /** セリフの括弧。念話で話す人ならざる存在は『』など。未設定は「」 */
+  bracket?: SpeechBracket;
 }
+
+export type SpeechBracket = "「」" | "『』" | "【】";
+export const SPEECH_BRACKETS: SpeechBracket[] = ["「」", "『』", "【】"];
 
 export interface Entry {
   name: string;

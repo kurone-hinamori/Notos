@@ -105,6 +105,17 @@ function acquisitionNotes(story: Story, ci: number, si: number): string {
   return parts.length ? `\n${parts.join("\n")}\n` : "";
 }
 
+/** 「」以外の括弧で話す人物の決まり(例:竜のセリフは『』) */
+export function bracketRuleList(story: Story): { name: string; bracket: string }[] {
+  return story.bible.characters.filter((c) => c.bracket && c.bracket !== "「」").map((c) => ({ name: c.name, bracket: c.bracket! }));
+}
+
+function bracketRules(story: Story): string {
+  const rules = bracketRuleList(story);
+  if (!rules.length) return "";
+  return `\n【セリフの括弧の決まり】\n${rules.map((r) => `- ${r.name}のセリフは必ず${r.bracket}で書く(「」にしない)`).join("\n")}\n`;
+}
+
 /** 短編集の共有情報をプロンプトに差し込む指示にする */
 function sharedInstructions(shared: SharedContext | undefined, target: "concept" | "bible"): string {
   if (!shared) return "";
@@ -236,7 +247,7 @@ ${s.shared ? `\n${sharedInstructions(s.shared, "bible")}\n` : ""}
 - worldview:世界観・舞台・時代・社会のルール(魔法や技術があればそのルール)を${short ? "150〜300字" : "300〜500字"}で。
 - style:文体指針。視点(例:主人公の一人称/三人称一元視点)、時制、全体のトーン、会話と地の文の比率などを具体的に。
 - timeline:物語の舞台設定上の時系列(物語開始時点までの重要な過去の出来事と、物語内の期間)。
-- characters:企画の登場人物すべて(必要なら脇役も追加して${short ? "3〜6名" : "6〜10名"})。各人物について reading(読み仮名)、age、appearance(外見)、personality(性格)、speech(口調・一人称・二人称の呼び方の例)、background(経歴)、relations(他の人物との関係)を具体的に。
+- characters:企画の登場人物すべて(必要なら脇役も追加して${short ? "3〜6名" : "6〜10名"})。各人物について reading(読み仮名)、age、appearance(外見)、personality(性格)、speech(口調・一人称・二人称の呼び方の例)、background(経歴)、relations(他の人物との関係)を具体的に。bracket はセリフの括弧で、ふつうに声に出して話す人物は「」。念話・テレパシー・人ならざる存在の声など特別な話し方をする人物だけ『』、機械音声やシステムなどは【】にする。
 - places:物語の主要な地名・場所を${short ? "1〜4件" : "4〜8件"}。description に位置関係や特徴を。
 - items:物語上重要な品物・道具・能力を${short ? "0〜3件" : "2〜6件"}。
 - terms:固有の用語・組織・種族などを必要なだけ(なければ空配列)。
@@ -370,7 +381,7 @@ ${
       : `- 物語を勝手に終わらせない。この場面は${next && si === ch.beats.length - 1 ? `次の章(${next.title})` : "次の場面"}へ続く途中経過である。`
 }
 - 描写・心理・会話を丁寧に書き込み、あっさり要約せず、場面として具体的に描く。
-${acquisitionNotes(story, ci, si)}${
+${acquisitionNotes(story, ci, si)}${bracketRules(story)}${
   opts.lines?.length
     ? `
 【この場面で必ず使うセリフ】
@@ -530,7 +541,7 @@ export function castPrompt(opts: {
 ${opts.note.trim() ? `補足の希望:${opts.note.trim()}\n` : ""}${opts.world.trim() ? `世界観:${opts.world.trim()}\n` : ""}${opts.existing.length ? `既にいるレギュラー:${opts.existing.join("、")}(この人物たちと関係を持たせ、名前を重複させない)\n` : ""}
 【条件】
 - どの話にも登場させやすく、話ごとに違う一面を見せられる魅力的な人物にする(企画ID:${rand()})。
-- 各人物について name(日本語表記の氏名)、reading(読み仮名)、role(短編集での役割)、age、appearance(外見)、personality(性格)、speech(口調・一人称・二人称の呼び方の例)、background(経歴)、relations(他のレギュラーとの関係)を具体的に。
+- 各人物について name(日本語表記の氏名)、reading(読み仮名)、role(短編集での役割)、age、appearance(外見)、personality(性格)、speech(口調・一人称・二人称の呼び方の例)、background(経歴)、relations(他のレギュラーとの関係)を具体的に。bracket はセリフの括弧で、ふつうに声に出して話す人物は「」。念話・テレパシー・人ならざる存在の声など特別な話し方をする人物だけ『』、機械音声やシステムなどは【】にする。
 - world:${opts.world.trim() ? "与えられた世界観をそのまま返す。" : "短編集全体の舞台・世界観を150〜300字で考える。"}`,
     },
   ];
@@ -684,6 +695,30 @@ ${opts.episodes.length ? opts.episodes.map((e, i) => `第${i + 1}話「${e.title
 - catchcopy:作品の魅力が一目で伝わるキャッチコピー。必ず${opts.catchcopyMax}字以内(空白・記号も1字と数える)。
 - introduction:作品の紹介文。300〜600字。主人公と状況、物語の目的や謎、読みどころを伝え、続きを読みたくなるようにする。結末は書かない。段落は改行で区切る。
 - tags:作品のタグ。${opts.tagsMax}個以内。ジャンル・題材・雰囲気・主人公の属性など、読者が検索しそうな短い言葉にする。1つのタグに空白や「#」を含めない。`,
+    },
+  ];
+}
+
+/** 決まった括弧で話す人物のセリフが、違う括弧で書かれていないかを点検する */
+export function bracketCheckPrompt(story: Story, ci: number): ChatMessage[] {
+  const ch = story.chapters[ci];
+  const rules = bracketRuleList(story);
+  return [
+    { role: "system", content: `あなたは小説の校閲者です。セリフの括弧の使い分けを点検します。出力はJSONのみ。` },
+    {
+      role: "user",
+      content: `この小説では、次の人物のセリフは決まった括弧で書きます。
+${rules.map((r) => `- ${r.name}:${r.bracket}`).join("\n")}
+
+【本文】
+${ch.body}
+
+本文の中から、上の人物のセリフなのに、決まりと違う括弧(たとえば『』で書くべきなのに「」)で書かれているものを、すべて挙げてください。
+- 誰のセリフかは、前後の地の文(「〜と竜は言った」など)や会話の流れから判断する。確信が持てないものは挙げない。
+- 上の人物以外のセリフは挙げない。決まりどおりの括弧で書かれているものも挙げない。
+- speaker:話している人物の名前(上の表記どおり)。
+- text:括弧の中の文字列を、本文から一字一句そのまま抜き出す(括弧そのものは含めない)。
+該当がなければ lines は空配列にしてください。`,
     },
   ];
 }

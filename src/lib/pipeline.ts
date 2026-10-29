@@ -1,4 +1,4 @@
-import type { Bible, BookPlan, Chapter, CharacterSheet, Concept, Entry, EntryKind, Issue, KakuyomuInfo, Settings, SharedContext, Story } from "../types";
+import type { Bible, BookPlan, Chapter, CharacterSheet, Concept, Entry, EntryKind, Issue, KakuyomuInfo, Settings, SharedContext, SpeechBracket, Story } from "../types";
 import { emptyBible, KAKUYOMU_CATCHCOPY_MAX, KAKUYOMU_POST_MIN, KAKUYOMU_TAGS_MAX } from "../types";
 import { chat, chatJson } from "./ollama";
 import {
@@ -13,6 +13,8 @@ import {
   acquiringEntries,
   castPrompt,
   castChangesPrompt,
+  bracketCheckPrompt,
+  bracketRuleList,
   entriesPrompt,
   insertLinePrompt,
   kakuyomuPrompt,
@@ -28,12 +30,13 @@ import {
   outlineSchema,
   castSchema,
   castChangesSchema,
+  bracketCheckSchema,
   entriesSchema,
   kakuyomuSchema,
   subtitlesSchema,
 } from "./schemas";
 import { normalizeNumbers } from "./numbers";
-import { cleanProse, countChars, decodeByteTokens, hasLine, lineBracketOk, lineQuoted, joinScenes, lineCore, linePos, sameName, splitChunks, tail } from "./text";
+import { cleanProse, countChars, decodeByteTokens, hasLine, lineBracket, lineBracketOk, lineQuoted, joinScenes, lineCore, linePos, sameName, splitChunks, tail } from "./text";
 
 /** パイプラインが物語を読み書きするための窓口(UI 側が保存を担当する)。 */
 export interface Ctx {
@@ -52,6 +55,7 @@ export type Task =
   | { kind: "outline" }
   | { kind: "subtitles" }
   | { kind: "numbers"; index: number | "all" }
+  | { kind: "brackets"; index: number }
   | { kind: "chapter"; index: number }
   | { kind: "proofread"; index: number | "all" };
 
@@ -509,6 +513,7 @@ async function stepBibleSync(ctx: Ctx, ci: number) {
           name: c.name, reading: c.reading ?? "", role: c.role ?? "", age: c.age ?? "",
           appearance: c.appearance ?? "", personality: c.personality ?? "", speech: c.speech ?? "",
           background: c.background ?? "", relations: c.relations ?? "", notes: c.notes ?? "",
+          bracket: (c.bracket as SpeechBracket | undefined) || undefined,
         });
         added++;
       }
@@ -681,7 +686,10 @@ async function stepProofread(ctx: Ctx, ci: number) {
   if (!ch.body) return;
   const changed = await proofreadBody(ctx, ci);
   unifyNumbers(ctx, ci);
+  const fixedBrackets = await checkBrackets(ctx, ci);
   await checkConsistency(ctx, ci);
+  // 括弧を付け替えた記録は、整合性チェックの指摘(「修正済み」)として残す
+  if (fixedBrackets.length) ctx.update((s) => void s.chapters[ci].issues.push(...fixedBrackets));
   ctx.update((s) => {
     s.chapters[ci].proofread = true;
   });
@@ -707,6 +715,47 @@ function unifyNumbers(ctx: Ctx, ci: number): number {
   return r.count + bytes.count;
 }
 
+/**
+ * 『』など決まった括弧で話す人物のセリフが、違う括弧で書かれていれば括弧だけを付け替える。
+ * 誰のセリフかの判断は LLM に任せ、付け替えは本文中に1か所だけある場合に限って機械的に行う(セリフの文字は変えない)。
+ */
+async function checkBrackets(ctx: Ctx, ci: number): Promise<Issue[]> {
+  const rules = bracketRuleList(ctx.get());
+  if (!rules.length || !ctx.get().chapters[ci].body.trim()) return [];
+  ctx.stage(`第${ci + 1}章のセリフの括弧を点検中`);
+  const r = await chatJson<{ lines: { speaker: string; text: string }[] }>(ctx.settings, {
+    messages: bracketCheckPrompt(ctx.get(), ci),
+    schema: bracketCheckSchema,
+    signal: ctx.signal,
+    numPredict: 2048,
+    temperature: 0.1,
+  });
+  const CLOSE: Record<string, string> = { "「": "」", "『": "』", "【": "】" };
+  // 使ってほしいセリフで括弧まで指定されているものは、その指定を優先する
+  const specified = new Set((ctx.get().lines ?? []).filter((l) => lineBracket(l)).map(lineCore));
+  const fixed: Issue[] = [];
+  ctx.update((s) => {
+    const ch = s.chapters[ci];
+    for (const it of r.lines ?? []) {
+      const text = it.text?.trim();
+      const rule = rules.find((x) => sameName(x.name, it.speaker ?? ""));
+      if (!text || !rule || specified.has(text)) continue;
+      const want = rule.bracket[0];
+      for (const open of Object.keys(CLOSE)) {
+        if (open === want) continue;
+        const wrong = `${open}${text}${CLOSE[open]}`;
+        if (ch.body.split(wrong).length - 1 !== 1) continue;
+        const right = `${want}${text}${CLOSE[want]}`;
+        ch.body = ch.body.replace(wrong, () => right);
+        fixed.push({ quote: wrong, problem: `${rule.name}のセリフは${rule.bracket}で書く決まりなので、括弧を付け替えました。`, replacement: right, applied: true });
+        break;
+      }
+    }
+  });
+  if (fixed.length) ctx.log(`第${ci + 1}章:セリフの括弧を${fixed.length}箇所付け替えました`);
+  return fixed;
+}
+
 // ---------------------------------------------------------------- 実行
 
 function resetChapter(ch: Chapter) {
@@ -722,6 +771,12 @@ export async function runTask(ctx: Ctx, task: Task): Promise<void> {
     case "bible":
       await stepBible(ctx);
       return;
+    case "brackets": {
+      const fixed = await checkBrackets(ctx, task.index);
+      if (fixed.length) ctx.update((s) => void s.chapters[task.index].issues.push(...fixed));
+      else ctx.log("括弧の付け替えが必要なセリフはありませんでした");
+      return;
+    }
     case "numbers": {
       const indices = task.index === "all" ? ctx.get().chapters.map((_, i) => i) : [task.index];
       let total = 0;

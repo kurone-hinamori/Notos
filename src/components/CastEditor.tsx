@@ -2,9 +2,9 @@ import { useRef, useState } from "react";
 import type { CharacterSheet, Settings, SharedCharacter } from "../types";
 import { generateCast } from "../lib/pipeline";
 import { toShared } from "../lib/anthology";
-import { Field } from "./ui";
+import { BracketSelect, Field } from "./ui";
 
-const FIELDS: [keyof CharacterSheet, string, number][] = [
+const FIELDS: [Exclude<keyof CharacterSheet, "bracket">, string, number][] = [
   ["reading", "読み", 0],
   ["role", "役割", 0],
   ["age", "年齢", 0],
@@ -98,6 +98,7 @@ export function CastEditor(props: {
               削除
             </button>
           </div>
+          <BracketSelect value={c.bracket} onChange={(v) => onChange((l) => l.map((x, j) => (j === i ? { ...x, bracket: v } : x)))} />
           {FIELDS.map(([key, label, rows]) => (
             <Field
               key={key}

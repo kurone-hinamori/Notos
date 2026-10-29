@@ -76,6 +76,7 @@ function characterText(c: CharacterSheet): string {
     line("口調", c.speech),
     line("経歴", c.background),
     line("関係", c.relations),
+    c.bracket && c.bracket !== "「」" ? `セリフの括弧:${c.bracket}(この人物のセリフは必ず${c.bracket}で書く)` : "",
     line("追記", c.notes),
   ]
     .filter(Boolean)

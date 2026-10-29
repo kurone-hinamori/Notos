@@ -1,5 +1,6 @@
 import { useState, type ReactNode } from "react";
-import type { Story } from "../types";
+import type { SpeechBracket, Story } from "../types";
+import { SPEECH_BRACKETS } from "../types";
 import { hasLine, lineBracketOk, linePos, parseLines } from "../lib/text";
 
 /** 使われているセリフが、入力された順番(上から順)に本文に出てくるかを調べる */
@@ -103,4 +104,20 @@ export function formatDate(iso: string): string {
   const d = new Date(iso);
   if (Number.isNaN(d.getTime())) return "";
   return d.toLocaleString("ja-JP", { year: "numeric", month: "2-digit", day: "2-digit", hour: "2-digit", minute: "2-digit" });
+}
+
+/** セリフの括弧の選択 */
+export function BracketSelect(props: { value: SpeechBracket | undefined; onChange: (v: SpeechBracket) => void }) {
+  return (
+    <label className="row">
+      <span className="muted small-text">セリフの括弧</span>
+      <select style={{ width: "auto" }} value={props.value ?? "「」"} onChange={(e) => props.onChange(e.target.value as SpeechBracket)}>
+        {SPEECH_BRACKETS.map((b) => (
+          <option key={b} value={b}>
+            {b === "「」" ? "「」(ふつうの会話)" : b === "『』" ? "『』(念話・人ならざる存在の声など)" : "【】(機械音声・システムなど)"}
+          </option>
+        ))}
+      </select>
+    </label>
+  );
 }

@@ -1,11 +1,11 @@
 import type { CharacterSheet, Entry, Story } from "../../types";
 import type { Task } from "../../lib/pipeline";
 import type { Mutate } from "../StoryDetail";
-import { Field, Section } from "../ui";
+import { BracketSelect, Field, Section } from "../ui";
 
 type EntryKey = "places" | "items" | "terms";
 
-const CHARACTER_FIELDS: [keyof Story["bible"]["characters"][number], string, number][] = [
+const CHARACTER_FIELDS: [Exclude<keyof Story["bible"]["characters"][number], "bracket">, string, number][] = [
   ["reading", "読み", 0],
   ["role", "役割", 0],
   ["age", "年齢", 0],
@@ -142,6 +142,7 @@ export function BibleTab(props: {
                 削除
               </button>
             </div>
+            <BracketSelect value={c.bracket} onChange={(v) => mutate((s) => void (s.bible.characters[i].bracket = v))} />
             {CHARACTER_FIELDS.map(([key, label, rows]) => (
               <Field
                 key={key}

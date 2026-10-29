@@ -90,6 +90,15 @@ export function BodyTab(props: { story: Story; mutate: Mutate; start: (t: Task) 
           >
             この章の数字を統一
           </button>
+          {story.bible.characters.some((c) => c.bracket && c.bracket !== "「」") && (
+            <button
+              disabled={running || !ch.body}
+              title="『』など決まった括弧で話す人物のセリフが、違う括弧で書かれていないかを点検して付け替えます"
+              onClick={() => props.start({ kind: "brackets", index: ci })}
+            >
+              この章の括弧を点検
+            </button>
+          )}
         </div>
 
         <details>
