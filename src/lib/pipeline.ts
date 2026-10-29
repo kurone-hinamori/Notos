@@ -1,5 +1,5 @@
 import type { Bible, BookPlan, Chapter, CharacterSheet, Concept, Entry, EntryKind, Issue, KakuyomuInfo, Settings, SharedContext, SpeechBracket, Story } from "../types";
-import { emptyBible, KAKUYOMU_CATCHCOPY_MAX, KAKUYOMU_POST_MIN, KAKUYOMU_TAGS_MAX } from "../types";
+import { emptyBible, KAKUYOMU_CATCHCOPY_MAX, KAKUYOMU_FIXED_TAGS, KAKUYOMU_POST_MIN, KAKUYOMU_TAGS_MAX, withFixedTags } from "../types";
 import { chat, chatJson } from "./ollama";
 import {
   biblePrompt,
@@ -363,18 +363,20 @@ async function stepSubtitles(ctx: Ctx) {
 /** カクヨム連載:キャッチコピー・紹介文・タグを考える(上限を超えたら作り直し、それでも超えたら切り詰める) */
 export async function generateKakuyomuInfo(
   settings: Settings,
-  opts: Omit<Parameters<typeof kakuyomuPrompt>[0], "catchcopyMax" | "tagsMax">,
+  opts: Omit<Parameters<typeof kakuyomuPrompt>[0], "catchcopyMax" | "tagsMax" | "fixedTags">,
   signal?: AbortSignal,
 ): Promise<KakuyomuInfo> {
   let last: KakuyomuInfo | null = null;
+  const freeTags = KAKUYOMU_TAGS_MAX - KAKUYOMU_FIXED_TAGS.length;
   for (let attempt = 0; attempt < 3; attempt++) {
     const r = await chatJson<KakuyomuInfo>(settings, {
-      messages: kakuyomuPrompt({ ...opts, catchcopyMax: KAKUYOMU_CATCHCOPY_MAX, tagsMax: KAKUYOMU_TAGS_MAX }),
+      // 「AI本文利用」は固定で付けるので、ガチャで作るのは残りの数だけ
+      messages: kakuyomuPrompt({ ...opts, catchcopyMax: KAKUYOMU_CATCHCOPY_MAX, tagsMax: freeTags, fixedTags: KAKUYOMU_FIXED_TAGS }),
       schema: kakuyomuSchema,
       temperature: Math.min(1.1, settings.temperature + 0.1),
       signal,
     });
-    const tags = [...new Set((r.tags ?? []).map((t) => t.replace(/[#＃\s　]/g, "")).filter(Boolean))];
+    const tags = withFixedTags([...new Set((r.tags ?? []).map((t) => t.replace(/[#＃\s　]/g, "")).filter(Boolean))]);
     last = { catchcopy: (r.catchcopy ?? "").trim(), introduction: (r.introduction ?? "").trim(), tags };
     if ([...last.catchcopy].length <= KAKUYOMU_CATCHCOPY_MAX && last.tags.length <= KAKUYOMU_TAGS_MAX) return last;
   }

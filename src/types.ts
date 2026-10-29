@@ -194,6 +194,13 @@ export interface KakuyomuInfo {
 
 export const KAKUYOMU_CATCHCOPY_MAX = 35;
 export const KAKUYOMU_TAGS_MAX = 8;
+/** 必ず付けるタグ(カクヨムでは、AIで本文を作った作品に必須) */
+export const KAKUYOMU_FIXED_TAGS = ["AI本文利用"];
+
+/** 固定のタグを先頭に入れ、重複を除いたタグの並び */
+export function withFixedTags(tags: string[]): string[] {
+  return [...KAKUYOMU_FIXED_TAGS, ...tags.filter((t) => !KAKUYOMU_FIXED_TAGS.includes(t))];
+}
 /** 連載1回分の文字数の目安 */
 export const KAKUYOMU_POST_MIN = 2000;
 export const KAKUYOMU_POST_MAX = 2500;

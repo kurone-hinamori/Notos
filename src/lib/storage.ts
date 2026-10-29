@@ -1,6 +1,6 @@
 import { invoke } from "@tauri-apps/api/core";
 import type { Anthology, AnthologyMode, Concept, Doc, EntryKind, Settings, SharedCharacter, SharedEntry, Story, StorySummary } from "../types";
-import { DEFAULT_PLAN, DEFAULT_SETTINGS, emptyBible } from "../types";
+import { DEFAULT_PLAN, DEFAULT_SETTINGS, emptyBible, withFixedTags } from "../types";
 import { newId } from "./text";
 
 export const listStories = () => invoke<StorySummary[]>("list_stories");
@@ -78,7 +78,7 @@ export function createAnthology(opts: {
     autoConcept: true,
     stopOnIssues: false,
     format: opts.format ?? "anthology",
-    ...(opts.format === "kakuyomu" ? { kakuyomu: { catchcopy: "", introduction: "", tags: [] } } : {}),
+    ...(opts.format === "kakuyomu" ? { kakuyomu: { catchcopy: "", introduction: "", tags: withFixedTags([]) } } : {}),
     episodes: Array.from({ length: opts.episodes }, () => createEpisode(base)),
   };
 }

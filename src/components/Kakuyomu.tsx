@@ -2,7 +2,7 @@ import { useRef, useState } from "react";
 import { save } from "@tauri-apps/plugin-dialog";
 import { writeFile } from "@tauri-apps/plugin-fs";
 import type { Anthology, KakuyomuInfo, Settings } from "../types";
-import { KAKUYOMU_CATCHCOPY_MAX, KAKUYOMU_POST_MAX, KAKUYOMU_POST_MIN, KAKUYOMU_TAGS_MAX } from "../types";
+import { KAKUYOMU_CATCHCOPY_MAX, KAKUYOMU_FIXED_TAGS, KAKUYOMU_POST_MAX, KAKUYOMU_POST_MIN, KAKUYOMU_TAGS_MAX, withFixedTags } from "../types";
 import type { Task } from "../lib/pipeline";
 import { generateKakuyomuInfo } from "../lib/pipeline";
 import { isUndecided } from "../lib/storage";
@@ -54,8 +54,11 @@ function CopyButton({ text, label = "コピー" }: { text: string; label?: strin
 /** カクヨムの掲載情報(キャッチコピー・紹介文・タグ)の編集と自動作成 */
 export function KakuyomuInfoEditor(props: { anthology: Anthology; mutate: MutateAnthology; settings: Settings }) {
   const { anthology: a, mutate } = props;
-  const info: KakuyomuInfo = a.kakuyomu ?? { catchcopy: "", introduction: "", tags: [] };
-  const [tagText, setTagText] = useState(info.tags.join("、"));
+  const stored: KakuyomuInfo = a.kakuyomu ?? { catchcopy: "", introduction: "", tags: [] };
+  // 「AI本文利用」は常に先頭に付ける(以前に作った連載にも)
+  const info: KakuyomuInfo = { ...stored, tags: withFixedTags(stored.tags) };
+  const free = (tags: string[]) => tags.filter((t) => !KAKUYOMU_FIXED_TAGS.includes(t));
+  const [tagText, setTagText] = useState(free(info.tags).join("、"));
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
   const abort = useRef<AbortController | null>(null);
@@ -81,7 +84,7 @@ export function KakuyomuInfoEditor(props: { anthology: Anthology; mutate: Mutate
         abort.current.signal,
       );
       setInfo(r);
-      setTagText(r.tags.join("、"));
+      setTagText(free(r.tags).join("、"));
     } catch (e) {
       if (!abort.current?.signal.aborted) setError(e instanceof Error ? e.message : String(e));
     } finally {
@@ -129,7 +132,7 @@ export function KakuyomuInfoEditor(props: { anthology: Anthology; mutate: Mutate
 
       <label className="field">
         <span>
-          タグ(読点区切り)
+          タグ(「{KAKUYOMU_FIXED_TAGS.join("」「")}」は固定。残りを読点区切りで入力)
           <span className={tagsOver ? "error" : "muted"}>
             ({info.tags.length}/{KAKUYOMU_TAGS_MAX}個{tagsOver ? "・上限を超えています" : ""})
           </span>
@@ -139,14 +142,18 @@ export function KakuyomuInfoEditor(props: { anthology: Anthology; mutate: Mutate
           placeholder="例:異世界ファンタジー、成り上がり、ハッピーエンド"
           onChange={(e) => {
             setTagText(e.target.value);
-            setInfo({ tags: [...new Set(e.target.value.split(/[,、，\s#＃]+/).map((t) => t.trim()).filter(Boolean))] });
+            setInfo({ tags: withFixedTags([...new Set(e.target.value.split(/[,、，\s#＃]+/).map((t) => t.trim()).filter(Boolean))]) });
           }}
         />
         {info.tags.length > 0 && (
           <div className="row wrap">
             {info.tags.map((t, i) => (
-              <span key={t} className={i < KAKUYOMU_TAGS_MAX ? "tag" : "tag tag-off"}>
-                {t}
+              <span
+                key={t}
+                className={KAKUYOMU_FIXED_TAGS.includes(t) ? "tag tag-strong" : i < KAKUYOMU_TAGS_MAX ? "tag" : "tag tag-off"}
+                title={KAKUYOMU_FIXED_TAGS.includes(t) ? "必須のタグなので固定です" : undefined}
+              >
+                {KAKUYOMU_FIXED_TAGS.includes(t) ? `🔒 ${t}` : t}
               </span>
             ))}
             <CopyButton text={info.tags.join(" ")} label="スペース区切りでコピー" />
@@ -177,7 +184,7 @@ export function KakuyomuPosts(props: {
     lines.push(`■作品名\n${a.title}`);
     if (k?.catchcopy) lines.push(`■キャッチコピー\n${k.catchcopy}`);
     if (k?.introduction) lines.push(`■紹介文\n${k.introduction}`);
-    if (k?.tags.length) lines.push(`■タグ\n${k.tags.join(" ")}`);
+    lines.push(`■タグ\n${withFixedTags(k?.tags ?? []).join(" ")}`);
     for (const { e, i, posts } of written) {
       lines.push(`\n========================================\n■章:第${i + 1}話 ${e.title}`);
       posts.forEach((p, j) => lines.push(`\n----------------------------------------\n■エピソード:${p.title || `${j + 1}`}\n\n${p.body}`));

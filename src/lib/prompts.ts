@@ -674,6 +674,8 @@ export function kakuyomuPrompt(opts: {
   episodes: { title: string; synopsis: string }[];
   catchcopyMax: number;
   tagsMax: number;
+  /** 別に必ず付けるタグ(生成するタグには含めない) */
+  fixedTags?: string[];
 }): ChatMessage[] {
   return [
     {
@@ -694,7 +696,9 @@ ${opts.episodes.length ? opts.episodes.map((e, i) => `第${i + 1}話「${e.title
 【条件】
 - catchcopy:作品の魅力が一目で伝わるキャッチコピー。必ず${opts.catchcopyMax}字以内(空白・記号も1字と数える)。
 - introduction:作品の紹介文。300〜600字。主人公と状況、物語の目的や謎、読みどころを伝え、続きを読みたくなるようにする。結末は書かない。段落は改行で区切る。
-- tags:作品のタグ。${opts.tagsMax}個以内。ジャンル・題材・雰囲気・主人公の属性など、読者が検索しそうな短い言葉にする。1つのタグに空白や「#」を含めない。`,
+- tags:作品のタグ。${opts.tagsMax}個以内。ジャンル・題材・雰囲気・主人公の属性など、読者が検索しそうな短い言葉にする。1つのタグに空白や「#」を含めない。${
+        opts.fixedTags?.length ? `「${opts.fixedTags.join("」「")}」は別に必ず付けるので、tags には含めない。` : ""
+      }`,
     },
   ];
 }
