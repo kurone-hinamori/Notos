@@ -786,10 +786,12 @@ async function stepProofread(ctx: Ctx, ci: number, si?: number) {
   if (!scopeText(ctx.get(), ci, si).trim()) return;
   const changed = await proofreadBody(ctx, ci, si);
   unifyNumbers(ctx, ci, si);
+  const ignored = ctx.get().chapters[ci].issues.filter((x) => x.state === "ignored");
   const fixedBrackets = await checkBrackets(ctx, ci, si);
   await checkConsistency(ctx, ci, si);
-  // 括弧を付け替えた記録は、整合性チェックの指摘(「修正済み」)として残す
-  if (fixedBrackets.length) ctx.update((s) => void s.chapters[ci].issues.push(...fixedBrackets));
+  // 括弧の記録は、整合性チェックの指摘として残す。校閲し直しても、無視した修正案はまた出さない
+  const fresh = fixedBrackets.filter((x) => !ignored.some((y) => y.quote === x.quote && y.replacement === x.replacement));
+  if (fresh.length) ctx.update((s) => void s.chapters[ci].issues.push(...fresh));
   ctx.update((s) => {
     const ch = s.chapters[ci];
     if (si === undefined) {
@@ -837,6 +839,7 @@ function unifyNumbers(ctx: Ctx, ci: number, si?: number): number {
 /**
  * 『』など決まった括弧で話す人のセリフが、違う括弧で書かれていれば括弧だけを付け替える(セリフの文字は変えない)。
  * セリフの行はプログラムで取り出し、LLM には1行ずつ話し手だけを判定してもらう。
+ * 「」は誰のセリフにも使うので判定を誤りやすく、「」からの付け替えは自動で行わず修正案として残す。
  */
 async function checkBrackets(ctx: Ctx, ci: number, si?: number): Promise<Issue[]> {
   const rules = bracketRuleList(ctx.get());
@@ -865,18 +868,33 @@ async function checkBrackets(ctx: Ctx, ci: number, si?: number): Promise<Issue[]
       // 判定の間に本文が変わっていたら付け替えない
       if (!list[d.line]?.startsWith(wrong)) continue;
       const right = `${rule.bracket[0]}${d.inner}${rule.bracket[1]}`;
+      const scene = si === undefined ? {} : { scene: si };
+      if (d.open === "「") {
+        fixed.push({
+          quote: wrong,
+          problem: `${rule.name}の言葉に見えます。${rule.bracket}で書く決まりなので、確認してください(違う場合は「無視する」)。`,
+          replacement: right,
+          applied: false,
+          ...scene,
+        });
+        continue;
+      }
       list[d.line] = right + list[d.line].slice(wrong.length);
       fixed.push({
         quote: wrong,
         problem: `${rule.name}は${rule.bracket}で書く決まりなので、括弧を付け替えました。`,
         replacement: right,
         applied: true,
-        ...(si === undefined ? {} : { scene: si }),
+        ...scene,
       });
     }
-    if (fixed.length) setScopeText(s, ci, si, list.join("\n"));
+    if (fixed.some((x) => x.applied)) setScopeText(s, ci, si, list.join("\n"));
   });
-  ctx.log(fixed.length ? `${label}:セリフの括弧を${fixed.length}箇所付け替えました` : `${label}:括弧の付け替えが必要なセリフはありませんでした`);
+  const applied = fixed.filter((x) => x.applied).length;
+  const proposed = fixed.length - applied;
+  if (applied) ctx.log(`${label}:セリフの括弧を${applied}箇所付け替えました`);
+  if (proposed) ctx.log(`${label}:括弧の確認が必要なセリフが${proposed}箇所あります`);
+  if (!fixed.length) ctx.log(`${label}:括弧の付け替えが必要なセリフはありませんでした`);
   return fixed;
 }
 
@@ -898,7 +916,11 @@ export async function runTask(ctx: Ctx, task: Task): Promise<void> {
       return;
     case "brackets": {
       const fixed = await checkBrackets(ctx, task.index, task.scene);
-      if (fixed.length) ctx.update((s) => void s.chapters[task.index].issues.push(...fixed));
+      // 点検を繰り返しても、同じ指摘を増やさない(「無視する」にした指摘もそのまま残す)
+      ctx.update((s) => {
+        const issues = s.chapters[task.index].issues;
+        issues.push(...fixed.filter((x) => !issues.some((y) => y.quote === x.quote && y.replacement === x.replacement && y.scene === x.scene)));
+      });
       return;
     }
     case "numbers": {

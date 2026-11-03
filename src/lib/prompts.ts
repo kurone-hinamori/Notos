@@ -116,11 +116,14 @@ export function bracketRuleList(story: Story): { name: string; bracket: string }
 /** 括弧の点検で、どの話し手にも当てはまらないセリフの答え */
 export const OTHER_SPEAKER = "それ以外";
 
+/** 括弧の点検で、人物ではなくても選べる話し手。選択肢にないと、決まりのある話し手と取り違えやすい */
+const COMMON_SPEAKERS = ["その場にいる名前のない人物", "画面やシステムの表示"];
+
 /** 括弧の点検で選べる話し手。決まりのない人物も入れておくと、その人のセリフを決まりのある話し手と取り違えにくい */
 export function bracketSpeakers(story: Story): string[] {
   const rules = bracketRuleList(story).map((r) => r.name);
   const others = story.bible.characters.map((c) => c.name).filter((n) => !rules.includes(n));
-  return [...new Set([...rules, ...others, OTHER_SPEAKER])];
+  return [...new Set([...rules, ...others, ...COMMON_SPEAKERS, OTHER_SPEAKER])];
 }
 
 function bracketRules(story: Story): string {
@@ -806,31 +809,46 @@ ${opts.episodes.length ? opts.episodes.map((e, i) => `第${i + 1}話「${e.title
 
 /**
  * 行頭から始まるセリフに番号を付けて、それぞれの話し手を答えてもらう。
- * 括弧の種類を見て話し手を決めると書き間違いに気づけないので、内容と流れから判断してもらう。
+ * 括弧の種類が見えるとモデルはそれで話し手を決めてしまい、書き間違いに気づけないので、
+ * 判定する行の括弧はすべて〈〉に置き換えて、種類を伏せて渡す。
  * text は点検する範囲の本文。
  */
 export function bracketCheckPrompt(story: Story, text: string): ChatMessage[] {
-  const rules = bracketRuleList(story);
-  const others = bracketSpeakers(story).filter((n) => n !== OTHER_SPEAKER && !rules.some((r) => r.name === n));
+  const speakers = bracketSpeakers(story).filter((n) => n !== OTHER_SPEAKER);
   const targets = dialogueLines(text);
-  const id = new Map(targets.map((d, k) => [d.line, k + 1]));
+  const at = new Map(targets.map((d, k) => [d.line, { d, id: k + 1 }]));
   const numbered = text
     .split("\n")
-    .map((l, i) => (id.has(i) ? `[${id.get(i)}] ${l}` : l))
+    .map((l, i) => {
+      const hit = at.get(i);
+      if (!hit) return l;
+      const { d, id } = hit;
+      return `[${id}] 〈${d.inner}〉${l.slice(d.inner.length + 2)}`;
+    })
     .join("\n");
+  const about = (name: string) => {
+    const c = story.bible.characters.find((x) => x.name === name);
+    if (!c) return `- ${name}`;
+    const detail = [c.role, c.speech && `口調:${c.speech.slice(0, 60)}`].filter(Boolean).join("。");
+    return `- ${name}${detail ? `(${detail})` : ""}`;
+  };
   return [
     { role: "system", content: `あなたは小説の校閲者です。セリフの話し手を判定します。出力はJSONのみ。` },
     {
       role: "user",
-      content: `この小説では、次の話し手の言葉は決まった括弧で書きます。
-${rules.map((r) => `- ${r.name}:${r.bracket}`).join("\n")}
+      content: `次の本文の、番号の付いた行([1]〜[${targets.length}])のすべてについて、話し手を答えてください。
 
-${others.length ? `そのほかの登場人物:${others.join("、")}\n\n` : ""}【本文】(行頭の [番号] が判定する行です)
+【話し手の候補】
+${speakers.map(about).join("\n")}
+
+【本文】(行頭の [番号] が判定する行です。話した言葉は〈〉で示しています)
 ${numbered}
 
-番号の付いた行([1]〜[${targets.length}])のすべてについて、話し手を答えてください。
-- 括弧は書き間違えられていることがあります。括弧の種類を見て話し手を決めないでください。言葉の内容・口調・前後の流れだけで判断してください。
-- 同じ括弧の行が続いていても、話し手が同じとは限りません。1行ずつ判断してください。
+【判定のしかた】
+- 言葉の内容・口調・前後の流れ・地の文から、1行ずつ判断してください。続いている行でも、話し手が同じとは限りません。
+- その場の人物に話しかけているのか、配信や掲示板を外から見ている人の反応なのかを区別してください。
+- 記者・通行人・冒険者など、その場で声を出している名前のない人は「${COMMON_SPEAKERS[0]}」です。配信や掲示板を見ている人とは区別してください。
+- 「警告:」「視聴者数:」のような、数値や状態を知らせる機械的な文は「${COMMON_SPEAKERS[1]}」です。
 - 名前を呼ばれている人は話し手ではありません(「まるるん！」は、まるるんに呼びかけている別の人のセリフです)。
 - 地の文の語り手(「あたし」「俺」など)が声に出したセリフは、語り手である登場人物のものです。
 - 頭の中で思ったこと、想像した言葉、うわさや引用、書名や呼び名など、その場で実際に話されていないものは「${OTHER_SPEAKER}」にします。
