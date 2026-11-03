@@ -1,8 +1,9 @@
 import type { Bible, CharacterSheet, Entry, Story } from "../types";
+import { stripNotation } from "./notation";
 
-/** 日本語の文字数(空白・改行を除く) */
+/** 日本語の文字数(空白・改行とカクヨム記法を除く) */
 export function countChars(text: string): number {
-  return text.replace(/\s/g, "").length;
+  return stripNotation(text).replace(/\s/g, "").length;
 }
 
 export function storyChars(story: Story): number {

@@ -1,6 +1,7 @@
 import JSZip from "jszip";
 import type { Anthology, Bible, Story } from "../types";
-import { postsOf } from "./anthology";
+import { rubiedPostsOf, rubyRulesOf } from "./anthology";
+import { isNoIndentLine, parseNotation, withRubies } from "./notation";
 
 /** EPUB にする本の中身(長編・短編集の共通形式) */
 export interface Book {
@@ -22,6 +23,19 @@ function inline(text: string): string {
     .replace(/(?<![!?])[!?]{2}(?![!?])/g, '<span class="tcy">$&</span>');
 }
 
+/** カクヨム記法をルビ・傍点にする */
+function richInline(text: string): string {
+  return parseNotation(text)
+    .map((p) =>
+      p.kind === "ruby"
+        ? `<ruby>${inline(p.text)}<rt>${esc(p.ruby ?? "")}</rt></ruby>`
+        : p.kind === "dots"
+          ? `<span class="em">${inline(p.text)}</span>`
+          : inline(p.text),
+    )
+    .join("");
+}
+
 function paragraphs(body: string): string {
   const out: string[] = [];
   let blank = false;
@@ -32,8 +46,8 @@ function paragraphs(body: string): string {
       continue;
     }
     blank = false;
-    const noIndent = /^[「『（(【〈《“◇]/.test(line);
-    out.push(`<p${noIndent ? ' class="nd"' : ""}>${inline(line.trim())}</p>`);
+    const text = line.trim();
+    out.push(`<p${isNoIndentLine(text) ? ' class="nd"' : ""}>${richInline(text)}</p>`);
   }
   return out.join("\n");
 }
@@ -71,6 +85,7 @@ p { margin: 0; text-indent: 1em; }
 p.nd { text-indent: 0; }
 p.sb { text-indent: 0; margin: 0; }
 .tcy { text-combine-upright: all; -webkit-text-combine: horizontal; -epub-text-combine: horizontal; }
+.em { text-emphasis-style: filled sesame; -webkit-text-emphasis-style: filled sesame; -epub-text-emphasis-style: filled sesame; }
 h1, h2 { font-weight: bold; margin: 0; line-height: 1.6; text-indent: 0; }
 h1 { font-size: 1.5em; margin-left: 2em; }
 h2 { font-size: 1.2em; margin-left: 1.5em; }
@@ -143,12 +158,13 @@ function bibleSections(b: Bible): { title: string; html: string }[] {
 }
 
 export function novelBook(story: Story, author: string, includeBible: boolean): Book {
+  const rules = rubyRulesOf(story);
   return {
     title: story.title,
     tagline: story.tagline,
     author,
     synopsis: story.synopsis,
-    chapters: story.chapters.map((c, i) => ({ heading: `第${i + 1}章　${c.title}`, body: c.body })),
+    chapters: story.chapters.map((c, i) => ({ heading: `第${i + 1}章　${c.title}`, body: withRubies(c.body, rules) })),
     appendix: includeBible && story.bible.generated ? bibleSections(story.bible).map((s) => ({ title: `設定資料 ${s.title}`, html: s.html })) : [],
   };
 }
@@ -166,10 +182,10 @@ export function anthologyBook(a: Anthology, author: string, includeBible: boolea
       // カクヨム連載は、各回のサブタイトルを見出しとして入れる
       body:
         a.format === "kakuyomu"
-          ? postsOf(e)
+          ? rubiedPostsOf(a, e)
               .map((p, i) => `◇${p.title || `${i + 1}`}\n${p.body}`)
               .join("\n\n")
-          : e.chapters.map((c) => c.body).filter(Boolean).join("\n\n"),
+          : withRubies(e.chapters.map((c) => c.body).filter(Boolean).join("\n\n"), rubyRulesOf(e, a)),
     })),
     appendix: includeBible
       ? eps.flatMap(({ e, n }) =>

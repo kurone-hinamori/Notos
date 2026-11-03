@@ -153,6 +153,8 @@ async function stepBible(ctx: Ctx) {
       items: mergeSharedEntries("items", raw.items, s.shared),
       terms: mergeSharedEntries("terms", raw.terms, s.shared),
       generated: true,
+      // 特殊なルビは利用者が決めるものなので、作り直しても残す
+      ...(s.bible.rubies ? { rubies: s.bible.rubies } : {}),
     };
   });
   ctx.log("設定資料を作成しました");

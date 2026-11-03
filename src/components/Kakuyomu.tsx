@@ -6,7 +6,7 @@ import { KAKUYOMU_CATCHCOPY_MAX, KAKUYOMU_FIXED_TAGS, KAKUYOMU_POST_MAX, KAKUYOM
 import type { Task } from "../lib/pipeline";
 import { generateKakuyomuInfo } from "../lib/pipeline";
 import { isUndecided } from "../lib/storage";
-import { postsOf } from "../lib/anthology";
+import { kakuyomuPostsOf, postsOf } from "../lib/anthology";
 import { countChars } from "../lib/text";
 import { Section } from "./ui";
 
@@ -174,7 +174,7 @@ export function KakuyomuPosts(props: {
 }) {
   const { anthology: a, mutate } = props;
   const [message, setMessage] = useState("");
-  const written = a.episodes.map((e, i) => ({ e, i, posts: postsOf(e) })).filter((x) => x.posts.length);
+  const written = a.episodes.map((e, i) => ({ e, i, posts: postsOf(e), outputs: kakuyomuPostsOf(a, e) })).filter((x) => x.posts.length);
   const total = written.reduce((n, x) => n + x.posts.length, 0);
 
   /** 投稿用のテキストを1つのファイルにまとめて保存する */
@@ -186,9 +186,9 @@ export function KakuyomuPosts(props: {
     if (k?.catchcopy) lines.push(`■キャッチコピー\n${k.catchcopy}`);
     if (k?.introduction) lines.push(`■紹介文\n${k.introduction}`);
     lines.push(`■タグ\n${withFixedTags(k?.tags ?? []).join(" ")}`);
-    for (const { e, i, posts } of written) {
+    for (const { e, i, outputs } of written) {
       lines.push(`\n========================================\n■章:第${i + 1}話 ${e.title}`);
-      posts.forEach((p, j) => lines.push(`\n----------------------------------------\n■エピソード:${p.title || `${j + 1}`}\n\n${p.body}`));
+      outputs.forEach((p, j) => lines.push(`\n----------------------------------------\n■エピソード:${p.title || `${j + 1}`}\n\n${p.body}`));
     }
     try {
       const safe = a.title.replace(/[\\/:*?"<>|]/g, "_").slice(0, 80) || "kakuyomu";
@@ -218,12 +218,13 @@ export function KakuyomuPosts(props: {
         <p className="muted small-text">
           カクヨムでは、話のタイトルを「章」、各回のサブタイトルを「エピソード」として登録します。1回分の目安は
           {KAKUYOMU_POST_MIN.toLocaleString()}〜{KAKUYOMU_POST_MAX.toLocaleString()}字です。作品名は「連載の情報」タブで変更できます。
+          コピーや保存する本文は、地の文の先頭を1文字下げ、登場人物の読みと特殊なルビを各話の初出に付けます。
         </p>
         {message && <p className={message.startsWith("保存に失敗") ? "error" : "muted"}>{message}</p>}
         {!total && <p className="muted">まだ本文のある話がありません。</p>}
       </Section>
 
-      {written.map(({ e, i, posts }) => (
+      {written.map(({ e, i, posts, outputs }) => (
         <Section
           key={e.id}
           title={`章:第${i + 1}話 ${e.title}`}
@@ -262,7 +263,7 @@ export function KakuyomuPosts(props: {
                     }
                   />
                   <CopyButton text={p.title} label="サブタイトルをコピー" />
-                  <CopyButton text={p.body} label="本文をコピー" />
+                  <CopyButton text={outputs[j].body} label="本文をコピー" />
                 </div>
                 <small className={off ? "error" : "muted"}>
                   {n.toLocaleString()}字{off ? `(目安の${KAKUYOMU_POST_MIN.toLocaleString()}〜${KAKUYOMU_POST_MAX.toLocaleString()}字から外れています)` : ""}

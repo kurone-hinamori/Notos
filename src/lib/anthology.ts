@@ -1,6 +1,7 @@
 import type { Anthology, CharacterSheet, Concept, Entry, EntryKind, SharedCharacter, SharedContext, SharedEntry, Story } from "../types";
 import { emptyBible } from "../types";
 import type { ConceptRequest } from "./prompts";
+import { buildRubyRules, indentParagraphs, withRubies, type AutoRuby } from "./notation";
 import { newId, sameName, splitScenes, tail as tailOf } from "./text";
 
 export const ENTRY_KINDS: EntryKind[] = ["places", "items", "terms"];
@@ -15,6 +16,23 @@ export function postsOf(e: Story): { title: string; body: string }[] {
   const ch = e.chapters[0];
   if (!ch?.body.trim()) return [];
   return splitScenes(ch.body).map((body, i) => ({ title: ch.sceneTitles?.[i] ?? "", body }));
+}
+
+/** 話に付けるルビの一覧。話の設定資料、連載共通、人物の読みの順に優先する */
+export function rubyRulesOf(e: Story, a?: Anthology): AutoRuby[] {
+  return buildRubyRules([...(e.bible.rubies ?? []), ...(a?.rubies ?? [])], [...(a?.cast ?? []), ...e.bible.characters]);
+}
+
+/** 話の初出にルビを付けた、連載1回分ごとの本文 */
+export function rubiedPostsOf(a: Anthology, e: Story): { title: string; body: string }[] {
+  const rules = rubyRulesOf(e, a);
+  const seen = new Set<string>();
+  return postsOf(e).map((p) => ({ ...p, body: withRubies(p.body, rules, seen) }));
+}
+
+/** カクヨムに貼り付ける本文(ルビを付け、段落の先頭を下げる) */
+export function kakuyomuPostsOf(a: Anthology, e: Story): { title: string; body: string }[] {
+  return rubiedPostsOf(a, e).map((p) => ({ ...p, body: indentParagraphs(p.body) }));
 }
 
 /** 話に出演する共通の登場人物 */

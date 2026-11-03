@@ -1,5 +1,5 @@
 import { useState, type ReactNode } from "react";
-import type { SpeechBracket, Story } from "../types";
+import type { RubyRule, SpeechBracket, Story } from "../types";
 import { SPEECH_BRACKETS } from "../types";
 import { hasLine, lineBracketOk, linePos, parseLines } from "../lib/text";
 
@@ -104,6 +104,33 @@ export function formatDate(iso: string): string {
   const d = new Date(iso);
   if (Number.isNaN(d.getTime())) return "";
   return d.toLocaleString("ja-JP", { year: "numeric", month: "2-digit", day: "2-digit", hour: "2-digit", minute: "2-digit" });
+}
+
+/** 特殊なルビの編集 */
+export function RubyRulesEditor({ rules, onChange }: { rules: RubyRule[]; onChange: (v: RubyRule[]) => void }) {
+  const set = (i: number, patch: Partial<RubyRule>) => onChange(rules.map((r, k) => (k === i ? { ...r, ...patch } : r)));
+  return (
+    <div className="stack">
+      <p className="muted small-text">
+        登場人物の読みに加えて、ここの語にも各話の初出でルビを付けます。カクヨム用の本文とEPUBに反映され、保存している本文は変わりません。
+        読みを空にした語には、登場人物の読みがあってもルビを付けません。
+      </p>
+      {rules.map((r, i) => (
+        <div key={i} className="row wrap">
+          <input className="grow" value={r.word} placeholder="語(例:紅蓮の炎)" onChange={(e) => set(i, { word: e.target.value })} />
+          <input className="grow" value={r.ruby} placeholder="読み(例:ヘルフレイム)" onChange={(e) => set(i, { ruby: e.target.value })} />
+          <button className="small danger" onClick={() => onChange(rules.filter((_, k) => k !== i))}>
+            削除
+          </button>
+        </div>
+      ))}
+      <div className="row">
+        <button className="small" onClick={() => onChange([...rules, { word: "", ruby: "" }])}>
+          ＋ ルビを追加
+        </button>
+      </div>
+    </div>
+  );
 }
 
 /** セリフの括弧の選択 */

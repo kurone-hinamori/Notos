@@ -1,7 +1,7 @@
 import type { CharacterSheet, Entry, Story } from "../../types";
 import type { Task } from "../../lib/pipeline";
 import type { Mutate } from "../StoryDetail";
-import { BracketSelect, Field, Section } from "../ui";
+import { BracketSelect, Field, RubyRulesEditor, Section } from "../ui";
 
 type EntryKey = "places" | "items" | "terms";
 
@@ -159,6 +159,10 @@ export function BibleTab(props: {
       {entrySection("places", "地名・場所")}
       {entrySection("items", "重要な品物")}
       {entrySection("terms", "用語・組織など")}
+
+      <Section title="特殊なルビ">
+        <RubyRulesEditor rules={b.rubies ?? []} onChange={(v) => mutate((s) => void (s.bible.rubies = v))} />
+      </Section>
     </div>
   );
 }

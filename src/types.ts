@@ -38,6 +38,12 @@ export interface SpeechRule {
   bracket: SpeechBracket;
 }
 
+/** 登場人物の読みのほかに、各話の初出に付けるルビ。ruby が空の語にはルビを付けない */
+export interface RubyRule {
+  word: string;
+  ruby: string;
+}
+
 export interface Entry {
   name: string;
   description: string;
@@ -57,6 +63,8 @@ export interface Bible {
   places: Entry[];
   items: Entry[];
   terms: Entry[];
+  /** 特殊なルビ */
+  rubies?: RubyRule[];
 }
 
 export interface Issue {
@@ -246,6 +254,8 @@ export interface Anthology {
   shared?: Partial<Record<EntryKind, SharedEntry[]>>;
   /** 個人ではない話し手(視聴者のコメントなど)の括弧の決まり */
   speechRules?: SpeechRule[];
+  /** 全話に共通する特殊なルビ */
+  rubies?: RubyRule[];
   /** まとめて生成で、概要が未決定の話のあらすじを自動で作る(おまかせ)。未設定は true */
   autoConcept?: boolean;
   /** まとめて生成で、「要確認」が残った話があれば次の話へ進まずに止まる。未設定は false */

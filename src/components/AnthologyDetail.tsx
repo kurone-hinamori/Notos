@@ -13,7 +13,8 @@ import { ProductionTab } from "./tabs/ProductionTab";
 import { SceneBodyTab } from "./tabs/SceneBodyTab";
 import { BibleTab } from "./tabs/BibleTab";
 import { ExportTab } from "./tabs/ExportTab";
-import { BracketSelect, Field, Section } from "./ui";
+import { BracketSelect, Field, RubyRulesEditor, Section } from "./ui";
+import { buildRubyRules } from "../lib/notation";
 import { CastEditor } from "./CastEditor";
 import {
   applyConcept,
@@ -725,12 +726,14 @@ function InfoTab({
     const i = a.episodes.findIndex((e) => e.id === id);
     return i < 0 ? "(削除された話)" : `第${i + 1}話「${a.episodes[i].title}」`;
   };
+  const autoRubies = buildRubyRules(a.rubies ?? [], [...(a.cast ?? []), ...a.episodes.flatMap((e) => e.bible.characters)]).filter((r) => r.ruby);
   const sections: [string, string][] = [
     ["info-about", isKakuyomu(a) ? "連載の情報" : "短編集の情報"],
     ["info-world", isKakuyomu(a) ? "世界観" : "短編集の種類"],
     ["info-speech", "セリフの括弧の決まり"],
     ["info-cast", "共通の登場人物"],
     ["info-shared", "共通の場所・品物・用語"],
+    ["info-ruby", "特殊なルビ"],
     ...(bible ? ([["episode-bible", "各話の設定資料"]] as [string, string][]) : []),
   ];
   return (
@@ -840,6 +843,12 @@ function InfoTab({
           episodeLabel={label}
           episodes={a.episodes.map((e, i) => ({ id: e.id, label: `第${i + 1}話${e.title ? `「${e.title}」` : ""}` }))}
         />
+      </Section>
+      <Section id="info-ruby" title="特殊なルビ">
+        <RubyRulesEditor rules={a.rubies ?? []} onChange={(v) => mutate((d) => void (d.rubies = v))} />
+        {autoRubies.length > 0 && (
+          <p className="muted small-text">現在、各話の初出に付くルビ:{autoRubies.map((r) => `${r.word}《${r.ruby}》`).join("、")}</p>
+        )}
       </Section>
       {bible && <div id="episode-bible">{bible}</div>}
       </div>
