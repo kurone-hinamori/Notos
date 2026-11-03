@@ -15,6 +15,7 @@ import {
   castChangesPrompt,
   bracketCheckPrompt,
   bracketRuleList,
+  bracketSpeakers,
   entriesPrompt,
   insertLinePrompt,
   kakuyomuPrompt,
@@ -41,6 +42,7 @@ import {
   cleanProse,
   countChars,
   decodeByteTokens,
+  dialogueLines,
   hasLine,
   lineBracket,
   lineBracketOk,
@@ -833,51 +835,48 @@ function unifyNumbers(ctx: Ctx, ci: number, si?: number): number {
 }
 
 /**
- * 『』など決まった括弧で話す人物のセリフが、違う括弧で書かれていれば括弧だけを付け替える。
- * 誰のセリフかの判断は LLM に任せ、付け替えは本文中に1か所だけある場合に限って機械的に行う(セリフの文字は変えない)。
+ * 『』など決まった括弧で話す人のセリフが、違う括弧で書かれていれば括弧だけを付け替える(セリフの文字は変えない)。
+ * セリフの行はプログラムで取り出し、LLM には1行ずつ話し手だけを判定してもらう。
  */
 async function checkBrackets(ctx: Ctx, ci: number, si?: number): Promise<Issue[]> {
   const rules = bracketRuleList(ctx.get());
   const label = scopeLabel(ctx.get(), ci, si);
-  if (!rules.length || !scopeText(ctx.get(), ci, si).trim()) return [];
+  const text = scopeText(ctx.get(), ci, si);
+  const targets = dialogueLines(text);
+  if (!rules.length || !targets.length) return [];
   ctx.stage(`${label}のセリフの括弧を点検中`);
-  const r = await chatJson<{ lines: { speaker: string; text: string }[] }>(ctx.settings, {
-    messages: bracketCheckPrompt(ctx.get(), ci, si),
-    schema: bracketCheckSchema,
+  const r = await chatJson<{ lines: { id: number; speaker: string }[] }>(ctx.settings, {
+    messages: bracketCheckPrompt(ctx.get(), text),
+    schema: bracketCheckSchema(bracketSpeakers(ctx.get())),
     signal: ctx.signal,
-    numPredict: 2048,
+    numPredict: targets.length * 40 + 256,
     temperature: 0.1,
   });
-  const CLOSE: Record<string, string> = { "「": "」", "『": "』", "【": "】" };
   // 使ってほしいセリフで括弧まで指定されているものは、その指定を優先する
   const specified = new Set((ctx.get().lines ?? []).filter((l) => lineBracket(l)).map(lineCore));
   const fixed: Issue[] = [];
   ctx.update((s) => {
-    let body = scopeText(s, ci, si);
+    const list = scopeText(s, ci, si).split("\n");
     for (const it of r.lines ?? []) {
-      const text = it.text?.trim();
-      const rule = rules.find((x) => sameName(x.name, it.speaker ?? ""));
-      if (!text || !rule || specified.has(text)) continue;
-      const want = rule.bracket[0];
-      for (const open of Object.keys(CLOSE)) {
-        if (open === want) continue;
-        const wrong = `${open}${text}${CLOSE[open]}`;
-        if (body.split(wrong).length - 1 !== 1) continue;
-        const right = `${want}${text}${CLOSE[want]}`;
-        body = body.replace(wrong, () => right);
-        fixed.push({
-          quote: wrong,
-          problem: `${rule.name}のセリフは${rule.bracket}で書く決まりなので、括弧を付け替えました。`,
-          replacement: right,
-          applied: true,
-          ...(si === undefined ? {} : { scene: si }),
-        });
-        break;
-      }
+      const d = targets[it.id - 1];
+      const rule = rules.find((x) => x.name === it.speaker);
+      if (!d || !rule || rule.bracket[0] === d.open || specified.has(d.inner)) continue;
+      const wrong = `${d.open}${d.inner}${d.close}`;
+      // 判定の間に本文が変わっていたら付け替えない
+      if (!list[d.line]?.startsWith(wrong)) continue;
+      const right = `${rule.bracket[0]}${d.inner}${rule.bracket[1]}`;
+      list[d.line] = right + list[d.line].slice(wrong.length);
+      fixed.push({
+        quote: wrong,
+        problem: `${rule.name}は${rule.bracket}で書く決まりなので、括弧を付け替えました。`,
+        replacement: right,
+        applied: true,
+        ...(si === undefined ? {} : { scene: si }),
+      });
     }
-    setScopeText(s, ci, si, body);
+    if (fixed.length) setScopeText(s, ci, si, list.join("\n"));
   });
-  if (fixed.length) ctx.log(`${label}:セリフの括弧を${fixed.length}箇所付け替えました`);
+  ctx.log(fixed.length ? `${label}:セリフの括弧を${fixed.length}箇所付け替えました` : `${label}:括弧の付け替えが必要なセリフはありませんでした`);
   return fixed;
 }
 
@@ -900,7 +899,6 @@ export async function runTask(ctx: Ctx, task: Task): Promise<void> {
     case "brackets": {
       const fixed = await checkBrackets(ctx, task.index, task.scene);
       if (fixed.length) ctx.update((s) => void s.chapters[task.index].issues.push(...fixed));
-      else ctx.log("括弧の付け替えが必要なセリフはありませんでした");
       return;
     }
     case "numbers": {

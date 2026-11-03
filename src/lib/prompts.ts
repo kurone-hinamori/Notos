@@ -1,6 +1,6 @@
 import type { ChatMessage } from "./ollama";
 import type { Bible, BookPlan, SharedContext, SharedEntryContext, Story } from "../types";
-import { bibleToText, splitScenes, tail } from "./text";
+import { bibleToText, dialogueLines, splitScenes, tail } from "./text";
 
 const EDITOR = "あなたは「小説家になろう」「カクヨム」で人気作を数多く手がけてきた、ライトノベル作家兼編集者です。";
 
@@ -107,13 +107,26 @@ function acquisitionNotes(story: Story, ci: number, si: number): string {
 
 /** 「」以外の括弧で話す人物の決まり(例:竜のセリフは『』) */
 export function bracketRuleList(story: Story): { name: string; bracket: string }[] {
-  return story.bible.characters.filter((c) => c.bracket && c.bracket !== "「」").map((c) => ({ name: c.name, bracket: c.bracket! }));
+  return [
+    ...story.bible.characters.filter((c) => c.bracket && c.bracket !== "「」").map((c) => ({ name: c.name, bracket: c.bracket! })),
+    ...(story.shared?.speechRules ?? []).filter((r) => r.bracket !== "「」").map((r) => ({ name: r.who, bracket: r.bracket })),
+  ];
+}
+
+/** 括弧の点検で、どの話し手にも当てはまらないセリフの答え */
+export const OTHER_SPEAKER = "それ以外";
+
+/** 括弧の点検で選べる話し手。決まりのない人物も入れておくと、その人のセリフを決まりのある話し手と取り違えにくい */
+export function bracketSpeakers(story: Story): string[] {
+  const rules = bracketRuleList(story).map((r) => r.name);
+  const others = story.bible.characters.map((c) => c.name).filter((n) => !rules.includes(n));
+  return [...new Set([...rules, ...others, OTHER_SPEAKER])];
 }
 
 function bracketRules(story: Story): string {
   const rules = bracketRuleList(story);
   if (!rules.length) return "";
-  return `\n【セリフの括弧の決まり】\n${rules.map((r) => `- ${r.name}のセリフは必ず${r.bracket}で書く(「」にしない)`).join("\n")}\n`;
+  return `\n【セリフの括弧の決まり】\n${rules.map((r) => `- ${r.name}:必ず${r.bracket}で書く(「」にしない)`).join("\n")}\n`;
 }
 
 /** 短編集の共有情報をプロンプトに差し込む指示にする */
@@ -528,6 +541,7 @@ ${ch.body}
         )
         .join("\n")}` : ""}
 
+${bracketRules(story)}
 見つかった問題だけを issues に列挙してください(最大10件)。
 - quote:本文中の該当箇所を、一字一句そのまま、10〜40字程度で抜き出す(本文中に1回しか現れない部分にする)。
 - problem:何が問題かを簡潔に。
@@ -560,6 +574,7 @@ ${scope.text}
 - それより前の展開や、この場面の中の出来事との時系列・事実の矛盾(死んだはずの人物が登場する、場所や時間の食い違いなど)。
 - 人物の呼び方や一人称の突然のブレ。${scope.acquire.length ? `\n${scope.acquire.join("\n")}` : ""}
 
+${bracketRules(story)}
 見つかった問題だけを issues に列挙してください(最大10件)。参考の本文の中の問題は挙げないでください。
 - quote:【点検する本文】の該当箇所を、一字一句そのまま、10〜40字程度で抜き出す(本文中に1回しか現れない部分にする)。
 - problem:何が問題かを簡潔に。
@@ -789,27 +804,38 @@ ${opts.episodes.length ? opts.episodes.map((e, i) => `第${i + 1}話「${e.title
   ];
 }
 
-/** 決まった括弧で話す人物のセリフが、違う括弧で書かれていないかを点検する */
-export function bracketCheckPrompt(story: Story, ci: number, si?: number): ChatMessage[] {
-  const ch = story.chapters[ci];
-  const body = si === undefined ? ch.body : (splitScenes(ch.body)[si] ?? "");
+/**
+ * 行頭から始まるセリフに番号を付けて、それぞれの話し手を答えてもらう。
+ * 括弧の種類を見て話し手を決めると書き間違いに気づけないので、内容と流れから判断してもらう。
+ * text は点検する範囲の本文。
+ */
+export function bracketCheckPrompt(story: Story, text: string): ChatMessage[] {
   const rules = bracketRuleList(story);
+  const others = bracketSpeakers(story).filter((n) => n !== OTHER_SPEAKER && !rules.some((r) => r.name === n));
+  const targets = dialogueLines(text);
+  const id = new Map(targets.map((d, k) => [d.line, k + 1]));
+  const numbered = text
+    .split("\n")
+    .map((l, i) => (id.has(i) ? `[${id.get(i)}] ${l}` : l))
+    .join("\n");
   return [
-    { role: "system", content: `あなたは小説の校閲者です。セリフの括弧の使い分けを点検します。出力はJSONのみ。` },
+    { role: "system", content: `あなたは小説の校閲者です。セリフの話し手を判定します。出力はJSONのみ。` },
     {
       role: "user",
-      content: `この小説では、次の人物のセリフは決まった括弧で書きます。
+      content: `この小説では、次の話し手の言葉は決まった括弧で書きます。
 ${rules.map((r) => `- ${r.name}:${r.bracket}`).join("\n")}
 
-【本文】
-${body}
+${others.length ? `そのほかの登場人物:${others.join("、")}\n\n` : ""}【本文】(行頭の [番号] が判定する行です)
+${numbered}
 
-本文の中から、上の人物のセリフなのに、決まりと違う括弧(たとえば『』で書くべきなのに「」)で書かれているものを、すべて挙げてください。
-- 誰のセリフかは、前後の地の文(「〜と竜は言った」など)や会話の流れから判断する。確信が持てないものは挙げない。
-- 上の人物以外のセリフは挙げない。決まりどおりの括弧で書かれているものも挙げない。
-- speaker:話している人物の名前(上の表記どおり)。
-- text:括弧の中の文字列を、本文から一字一句そのまま抜き出す(括弧そのものは含めない)。
-該当がなければ lines は空配列にしてください。`,
+番号の付いた行([1]〜[${targets.length}])のすべてについて、話し手を答えてください。
+- 括弧は書き間違えられていることがあります。括弧の種類を見て話し手を決めないでください。言葉の内容・口調・前後の流れだけで判断してください。
+- 同じ括弧の行が続いていても、話し手が同じとは限りません。1行ずつ判断してください。
+- 名前を呼ばれている人は話し手ではありません(「まるるん！」は、まるるんに呼びかけている別の人のセリフです)。
+- 地の文の語り手(「あたし」「俺」など)が声に出したセリフは、語り手である登場人物のものです。
+- 頭の中で思ったこと、想像した言葉、うわさや引用、書名や呼び名など、その場で実際に話されていないものは「${OTHER_SPEAKER}」にします。
+- 判断できないものも「${OTHER_SPEAKER}」にします。
+- id:行の番号。speaker:次のどれか(${bracketSpeakers(story).join(" / ")})。`,
     },
   ];
 }

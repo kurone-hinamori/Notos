@@ -114,7 +114,7 @@ export function BracketSelect(props: { value: SpeechBracket | undefined; onChang
       <select style={{ width: "auto" }} value={props.value ?? "「」"} onChange={(e) => props.onChange(e.target.value as SpeechBracket)}>
         {SPEECH_BRACKETS.map((b) => (
           <option key={b} value={b}>
-            {b === "「」" ? "「」(ふつうの会話)" : b === "『』" ? "『』(念話・人ならざる存在の声など)" : "【】(機械音声・システムなど)"}
+            {b === "「」" ? "「」(ふつうの会話)" : b === "『』" ? "『』(念話・人ならざる存在の声など)" : "【】(機械音声・システム・コメントなど)"}
           </option>
         ))}
       </select>

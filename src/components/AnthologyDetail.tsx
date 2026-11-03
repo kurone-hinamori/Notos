@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState, type ReactNode } from "react";
-import type { Anthology, AnthologyMode, CharacterSheet, Concept, Entry, EntryKind, Settings, SharedCharacter, Story } from "../types";
+import type { Anthology, AnthologyMode, CharacterSheet, Concept, Entry, EntryKind, Settings, SharedCharacter, SpeechRule, Story } from "../types";
 import type { Job, RunState } from "../hooks";
 import type { Task } from "../lib/pipeline";
 import { generateSeriesTitles } from "../lib/pipeline";
@@ -13,7 +13,7 @@ import { ProductionTab } from "./tabs/ProductionTab";
 import { SceneBodyTab } from "./tabs/SceneBodyTab";
 import { BibleTab } from "./tabs/BibleTab";
 import { ExportTab } from "./tabs/ExportTab";
-import { Field, Section } from "./ui";
+import { BracketSelect, Field, Section } from "./ui";
 import { CastEditor } from "./CastEditor";
 import {
   applyConcept,
@@ -606,7 +606,7 @@ function EpisodePanel(props: {
           disabled={run.running && run.storyId !== ep.id}
         />
       )}
-      {tab === "body" && <SceneBodyTab story={ep} mutate={props.mutate} start={props.start} running={run.running} serial={serial} />}
+      {tab === "body" && <SceneBodyTab story={ep} mutate={props.mutate} start={props.start} running={run.running} serial={serial} hasSpeechRules={(a.speechRules ?? []).some((r) => r.who.trim())} />}
       {tab === "bible" && !serial && (
         <BibleTab
           story={ep}
@@ -728,6 +728,7 @@ function InfoTab({
   const sections: [string, string][] = [
     ["info-about", isKakuyomu(a) ? "連載の情報" : "短編集の情報"],
     ["info-world", isKakuyomu(a) ? "世界観" : "短編集の種類"],
+    ["info-speech", "セリフの括弧の決まり"],
     ["info-cast", "共通の登場人物"],
     ["info-shared", "共通の場所・品物・用語"],
     ...(bible ? ([["episode-bible", "各話の設定資料"]] as [string, string][]) : []),
@@ -809,6 +810,9 @@ function InfoTab({
           onChange={(v) => mutate((d) => void (d.world = v))}
         />
       </Section>
+      <Section id="info-speech" title="セリフの括弧の決まり">
+        <SpeechRulesEditor rules={a.speechRules ?? []} onChange={(v) => mutate((d) => void (d.speechRules = v))} />
+      </Section>
       <Section id="info-cast" title="共通の登場人物">
         <CastEditor
           cast={a.cast ?? []}
@@ -838,6 +842,38 @@ function InfoTab({
         />
       </Section>
       {bible && <div id="episode-bible">{bible}</div>}
+      </div>
+    </div>
+  );
+}
+
+/** 個人ではない話し手(視聴者のコメントなど)の括弧の決まりの編集 */
+function SpeechRulesEditor({ rules, onChange }: { rules: SpeechRule[]; onChange: (v: SpeechRule[]) => void }) {
+  const set = (i: number, patch: Partial<SpeechRule>) => onChange(rules.map((r, k) => (k === i ? { ...r, ...patch } : r)));
+  return (
+    <div className="stack">
+      <p className="muted small-text">
+        視聴者のコメントや掲示板の書き込みなど、個人ではない話し手の括弧を決めます。人物ごとの括弧は「共通の登場人物」で決めます。
+        決まりは本文の執筆・校閲・「括弧を点検」で使われます。
+      </p>
+      {rules.map((r, i) => (
+        <div key={i} className="row wrap">
+          <input className="grow" value={r.who} placeholder="話し手(例:視聴者のコメント・掲示板の書き込み)" onChange={(e) => set(i, { who: e.target.value })} />
+          <BracketSelect value={r.bracket} onChange={(bracket) => set(i, { bracket })} />
+          <button className="small danger" onClick={() => onChange(rules.filter((_, k) => k !== i))}>
+            削除
+          </button>
+        </div>
+      ))}
+      <div className="row wrap">
+        <button className="small" onClick={() => onChange([...rules, { who: "", bracket: "【】" }])}>
+          ＋ 決まりを追加
+        </button>
+        {!rules.some((r) => r.who.includes("コメント")) && (
+          <button className="small" onClick={() => onChange([...rules, { who: "視聴者のコメント・掲示板の書き込み", bracket: "【】" }])}>
+            ＋ 視聴者のコメント・掲示板は【】
+          </button>
+        )}
       </div>
     </div>
   );

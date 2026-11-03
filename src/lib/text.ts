@@ -44,6 +44,28 @@ export function joinScenes(existing: string, scene: string): string {
   return existing ? `${existing}\n\n${scene}` : scene;
 }
 
+const CLOSE_OF: Record<string, string> = { "「": "」", "『": "』", "【": "】" };
+
+/** 行頭から始まるセリフの一覧。line は本文の行の番号、inner は括弧の中身(入れ子の括弧はそのまま残す) */
+export function dialogueLines(text: string): { line: number; open: string; close: string; inner: string }[] {
+  const out: { line: number; open: string; close: string; inner: string }[] = [];
+  text.split("\n").forEach((raw, line) => {
+    const open = raw[0];
+    const close = CLOSE_OF[open];
+    if (!close) return;
+    let depth = 0;
+    for (let i = 0; i < raw.length; i++) {
+      if (raw[i] === open) depth++;
+      else if (raw[i] === close && --depth === 0) {
+        // 「A」「B」のように括弧が並ぶ行は、1人の発話ではなく想像や引用を並べたものなので対象にしない
+        if (!(raw[i + 1] in CLOSE_OF)) out.push({ line, open, close, inner: raw.slice(1, i) });
+        return;
+      }
+    }
+  });
+  return out;
+}
+
 /** 本文を場面(空行で区切られたかたまり)ごとに分ける */
 export function splitScenes(body: string): string[] {
   return body

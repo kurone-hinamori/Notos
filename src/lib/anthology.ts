@@ -98,7 +98,8 @@ export function sharedContextFor(a: Anthology, index: number): SharedContext {
         prevTail: index > 0 ? tailOf(a.episodes[index - 1].chapters.map((c) => c.body).join("\n"), 600) : undefined,
       }
     : undefined;
-  return { characters, entries, world: a.world ?? "", avoidNames: usedNames(a, index), previous, serial };
+  const speechRules = (a.speechRules ?? []).filter((r) => r.who.trim()).map((r) => ({ who: r.who.trim(), bracket: r.bracket }));
+  return { characters, entries, world: a.world ?? "", avoidNames: usedNames(a, index), previous, serial, speechRules };
 }
 
 /** index 番目の話のあらすじをガチャ・おまかせで考えるときの条件 */

@@ -32,6 +32,12 @@ export interface CharacterSheet {
 export type SpeechBracket = "「」" | "『』" | "【】";
 export const SPEECH_BRACKETS: SpeechBracket[] = ["「」", "『』", "【】"];
 
+/** 個人ではない話し手(視聴者のコメント、掲示板の書き込みなど)の括弧の決まり */
+export interface SpeechRule {
+  who: string;
+  bracket: SpeechBracket;
+}
+
 export interface Entry {
   name: string;
   description: string;
@@ -175,6 +181,8 @@ export interface SharedContext {
   avoidNames: string[];
   /** 連作短編の場合、これまでの話の流れ */
   previous: string;
+  /** 個人ではない話し手の括弧の決まり */
+  speechRules?: SpeechRule[];
   /** カクヨム連載の場合、この話の位置と1回分の長さ */
   serial?: {
     index: number;
@@ -236,6 +244,8 @@ export interface Anthology {
   cast?: SharedCharacter[];
   /** 共通の場所・品物・用語 */
   shared?: Partial<Record<EntryKind, SharedEntry[]>>;
+  /** 個人ではない話し手(視聴者のコメントなど)の括弧の決まり */
+  speechRules?: SpeechRule[];
   /** まとめて生成で、概要が未決定の話のあらすじを自動で作る(おまかせ)。未設定は true */
   autoConcept?: boolean;
   /** まとめて生成で、「要確認」が残った話があれば次の話へ進まずに止まる。未設定は false */

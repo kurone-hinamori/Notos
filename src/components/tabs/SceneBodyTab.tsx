@@ -21,6 +21,8 @@ export function SceneBodyTab(props: {
   running: boolean;
   /** カクヨム連載:場面(=連載1回分)にサブタイトルを付ける */
   serial?: boolean;
+  /** 個人ではない話し手の括弧の決まりがある */
+  hasSpeechRules?: boolean;
 }) {
   const { story, mutate, running, serial } = props;
   const ci = 0;
@@ -58,7 +60,7 @@ export function SceneBodyTab(props: {
   const openIn = (k: number) => all.filter((x) => x.at === k && isOpenIssue(x.it)).length;
   const here = all.filter((x) => x.at === si);
   const unplaced = all.filter((x) => x.at < 0);
-  const hasBrackets = story.bible.characters.some((c) => c.bracket && c.bracket !== "「」");
+  const hasBrackets = props.hasSpeechRules || story.bible.characters.some((c) => c.bracket && c.bracket !== "「」");
   const sceneTitle = (k: number) => (serial ? ch.sceneTitles?.[k] : "") || ch.beats[k]?.slice(0, 24) || "";
 
   const edit = (value: string) => {
@@ -134,7 +136,7 @@ export function SceneBodyTab(props: {
           {hasBrackets && (
             <button
               disabled={running || !written}
-              title="『』など決まった括弧で話す人物のセリフが、違う括弧で書かれていないかを点検して付け替えます"
+              title="『』【】など決まった括弧で話す人のセリフが、違う括弧で書かれていないかを1行ずつ点検して付け替えます"
               onClick={() => props.start({ kind: "brackets", index: ci, scene: si })}
             >
               括弧を点検
