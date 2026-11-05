@@ -54,7 +54,10 @@ export const outlineSchema = obj({
 
 export const digestSchema = obj({ digest: str });
 
-export const artCaptionSchema = obj({ caption: str, characters: arr(str) });
+// 日本語を先に書かせ、英語はその訳にする(作者が日本語で読んで直せるように)
+export const artCaptionSchema = obj({ captionJa: str, caption: str, characters: arr(str) });
+
+export const artTranslateSchema = obj({ text: str });
 
 /** 本文から抽出した設定資料への追記 */
 export const bibleUpdateSchema = obj({

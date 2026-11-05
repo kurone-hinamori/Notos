@@ -490,7 +490,52 @@ export function artLooksPrompt(opts: { title: string; genre: string; world: stri
 - 外見の記述がない部分は、作品の雰囲気に合わせて決める。同じ人物をほかの絵でも描くので、はっきり見分けられる特徴を入れる。
 - 人物そのものだけを書き、場所・背景・その場の動きは書かない。
 - 日本語の名前は書かない。${ART_SAFE_RULE}
+- captionJa に、同じ内容を作者が読むための自然な日本語で先に書き、caption はその英訳にする(内容をそろえる)。
 - characters は空の配列にする。`,
+    },
+  ];
+}
+
+/** 作者が直した日本語の説明を英語にする/英語の説明を日本語にする */
+export function artTranslatePrompt(opts: {
+  text: string;
+  to: "en" | "ja";
+  sheet: boolean;
+  characters: CharacterSheet[];
+  /** 直す前の日本語と、その英語(変わっていない部分の英語を変えないため) */
+  previous?: { ja: string; en: string };
+}): ChatMessage[] {
+  // 外見を見せると訳に書き足してしまうので、呼び方を決めるための役割と年齢だけにする
+  const cast = opts.characters.map((c) => `- ${c.name}:${c.role} ${c.age}`.slice(0, 80)).join("\n");
+  if (opts.to === "ja")
+    return [
+      { role: "system", content: "あなたは翻訳者です。画像生成に使う英語の絵の説明を、作者が読むための日本語にします。" },
+      {
+        role: "user",
+        content: `次の英語の絵の説明を、自然な日本語に訳してください。
+
+【英語】
+${opts.text}
+
+【守ること】
+- text に日本語で書く。内容を足したり省いたりしない。`,
+      },
+    ];
+  return [
+    { role: "system", content: "あなたは翻訳者です。作者が日本語で書いた絵の説明を、画像生成モデルに渡す英語にします。" },
+    {
+      role: "user",
+      content: `次の日本語の絵の説明を英語に訳してください。
+
+【日本語】
+${opts.text}${opts.previous ? `\n【直す前の日本語】\n${opts.previous.ja}\n【直す前の英語】\n${opts.previous.en}` : ""}
+【人物】
+${cast || "(なし)"}
+
+【守ること】
+- text に英語の1段落で書く。日本語に書いてあることはすべて訳し、勝手に足したり省いたりしない。色・数・位置などの細かい指定もそのまま訳す。${opts.previous ? "\n- 作者が直したのは【直す前の日本語】との違いの部分だけ。変わっていない部分は【直す前の英語】の言い回しをそのまま使い、違う部分だけを訳して直す。消された部分は英語からも消す。" : ""}
+- 人物の名前は英語に書かない。${opts.sheet ? '"the woman"、"he" のように呼ぶ。' : '【人物】を参考に "the young woman"、"the older man" のように短く呼ぶ。日本語に書いていない髪・目・服装・持ち物は書き足さない(人物の外見は別に足す)。'}
+- ${ART_SAFE_RULE}`,
     },
   ];
 }
@@ -523,6 +568,7 @@ ${cast || "(なし)"}
 - caption に、依頼文ではなく完成した絵の描写として、英語の1段落(40〜90語)で書く。構図、場所、光、雰囲気、人物の動きと表情を具体的に書く。
 - 人物の髪・目・服装は別に足すので書かない。人物は名前ではなく "the young woman" のように呼ぶ。
 - 絵の中に文字や看板を描かせない。${ART_SAFE_RULE}
+- captionJa に、同じ内容を作者が読むための自然な日本語で先に書き、caption はその英訳にする(内容をそろえる)。captionJa では人物を名前で呼んでよい。
 - characters に、絵に描く人物の名前を【人物】の表記のまま入れる(多くても3人。人物を描かない絵なら空の配列)。`,
     },
   ];

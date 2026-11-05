@@ -26,6 +26,7 @@ import {
 import {
   bibleUpdateSchema,
   artCaptionSchema,
+  artTranslateSchema,
   bibleSchema,
   conceptSchema,
   digestSchema,
@@ -431,11 +432,23 @@ export async function generateSeriesTitles(
 }
 
 /** 画像生成に渡す英語の説明文を考える */
-export async function generateArtCaption(settings: Settings, messages: ChatMessage[], signal?: AbortSignal): Promise<{ caption: string; characters: string[] }> {
-  const r = await chatJson<{ caption: string; characters: string[] }>(settings, { messages, schema: artCaptionSchema, temperature: 0.7, signal });
+export async function generateArtCaption(
+  settings: Settings,
+  messages: ChatMessage[],
+  signal?: AbortSignal,
+): Promise<{ caption: string; captionJa: string; characters: string[] }> {
+  const r = await chatJson<{ caption: string; captionJa: string; characters: string[] }>(settings, { messages, schema: artCaptionSchema, temperature: 0.7, signal });
   const caption = (r.caption ?? "").trim();
   if (!caption) throw new Error("説明文を作れませんでした");
-  return { caption, characters: r.characters ?? [] };
+  return { caption, captionJa: (r.captionJa ?? "").trim(), characters: r.characters ?? [] };
+}
+
+/** 絵の説明を日本語と英語の間で訳す */
+export async function translateArtText(settings: Settings, messages: ChatMessage[], signal?: AbortSignal): Promise<string> {
+  const r = await chatJson<{ text: string }>(settings, { messages, schema: artTranslateSchema, temperature: 0.2, signal });
+  const text = (r.text ?? "").trim();
+  if (!text) throw new Error("訳せませんでした");
+  return text;
 }
 
 /** カクヨム連載:キャッチコピー・紹介文・タグを考える(上限を超えたら作り直し、それでも超えたら切り詰める) */

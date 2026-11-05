@@ -291,6 +291,12 @@ export interface ArtItem {
   title: string;
   /** 英語の説明。キャラクターシートでは、その人物の外見(他の画像にも使う) */
   prompt: string;
+  /** 日本語の説明(作者が読んで直す。直すと英語に訳し直す) */
+  promptJa?: string;
+  /** いまの英語の訳し元になった日本語(promptJa と違えば、英語が古い) */
+  promptFrom?: string;
+  /** 英語を直接直した(日本語には反映されていない) */
+  promptEdited?: boolean;
   /** キャラクターシート:対象の人物。ほかの画像:描く人物 */
   characters: string[];
   /** 場所。話の id または ch{章の番号} */

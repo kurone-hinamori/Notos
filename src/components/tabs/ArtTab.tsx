@@ -6,8 +6,8 @@ import { isAnthology } from "../../types";
 import type { ArtJob } from "../../hooks";
 import { ART_KINDS, ART_KIND_ORDER, DEFAULT_ART_STYLE, artCharacters, artPlaces, artReferences, chosenImage, emptyArt, exportArtImage, fullArtPrompt, newArtItem, toGrayscale } from "../../lib/art";
 import { detectComfy, generateImage, type ComfyModels } from "../../lib/comfy";
-import { generateArtCaption } from "../../lib/pipeline";
-import { artCaptionPrompt, artLooksPrompt } from "../../lib/prompts";
+import { generateArtCaption, translateArtText } from "../../lib/pipeline";
+import { artCaptionPrompt, artLooksPrompt, artTranslatePrompt } from "../../lib/prompts";
 import { deleteArt, loadArt, saveArt } from "../../lib/storage";
 import { newId, sameName } from "../../lib/text";
 import { Section } from "../ui";
@@ -24,6 +24,14 @@ const MAX_SEED = 2 ** 40;
 const worldOf = (doc: Doc) => (isAnthology(doc) ? (doc.world ?? "") : doc.bible.worldview);
 const genreOf = (doc: Doc) => (isAnthology(doc) ? (doc.genre ?? "") : doc.genre);
 const synopsisOf = (doc: Doc) => (isAnthology(doc) ? doc.episodes.map((e) => e.synopsis).filter(Boolean).join(" ") : doc.synopsis);
+
+/** 作った説明文を入れる(日本語と英語はそろっている扱いにする) */
+function setCaption(x: ArtItem, r: { caption: string; captionJa: string }) {
+  x.prompt = r.caption;
+  x.promptJa = r.captionJa || undefined;
+  x.promptFrom = x.promptJa;
+  x.promptEdited = false;
+}
 
 /** 保存した画像を表示する */
 function ArtThumb(props: { docId: string; image: ArtImage; selected: boolean; onClick: () => void }) {
@@ -86,7 +94,7 @@ function ArtItemCard(props: {
         const character = characters.find((c) => sameName(c.name, item.characters[0] ?? ""));
         if (!character) throw new Error("この人物は設定資料にありません");
         const r = await generateArtCaption(settings, artLooksPrompt({ ...base, character }), signal);
-        await patch((x) => void (x.prompt = r.caption));
+        await patch((x) => setCaption(x, r));
         return;
       }
       const scene = k.place === "scene" ? (place?.scenes[item.scene ?? 0] ?? "") : k.place === "chapter" ? (place?.scenes[0] ?? "") : "";
@@ -97,20 +105,113 @@ function ArtItemCard(props: {
       );
       const names = r.characters.filter((n) => characters.some((c) => sameName(c.name, n))).slice(0, 3);
       await patch((x) => {
-        x.prompt = r.caption;
+        setCaption(x, r);
         if (k.people && !x.characters.length) x.characters = names;
       });
     });
 
+  // ---- 日本語と英語の説明 ----
+  const [translating, setTranslating] = useState<"" | "en" | "ja">("");
+  const [translateError, setTranslateError] = useState("");
+  const translation = useRef<AbortController | null>(null);
+  /** 日本語を直したのに、英語がまだ訳し直されていない */
+  const stale = !!item.promptJa?.trim() && item.promptJa !== item.promptFrom;
+  const castOf = () => {
+    const chosen = characters.filter((c) => item.characters.some((n) => sameName(c.name, n)));
+    return chosen.length || item.kind === "sheet" ? chosen : characters.slice(0, 8);
+  };
+
+  const translate = async (to: "en" | "ja", text: string, signal: AbortSignal) => {
+    // 直す前の日本語と英語があれば渡し、変わっていない部分の英語を保つ
+    const previous = to === "en" && item.promptFrom?.trim() && item.prompt.trim() ? { ja: item.promptFrom, en: item.prompt } : undefined;
+    return translateArtText(settings, artTranslatePrompt({ text, to, sheet: item.kind === "sheet", characters: castOf(), previous }), signal);
+  };
+
+  /** カードの中で訳す(生成の順番待ちとは別に動かす) */
+  const translateHere = async (to: "en" | "ja") => {
+    translation.current?.abort();
+    const ac = new AbortController();
+    translation.current = ac;
+    setTranslating(to);
+    setTranslateError("");
+    try {
+      if (to === "en") {
+        const ja = item.promptJa ?? "";
+        const en = await translate("en", ja, ac.signal);
+        if (ac.signal.aborted) return;
+        await patch((x) => {
+          x.prompt = en;
+          x.promptFrom = ja;
+          x.promptEdited = false;
+        });
+      } else {
+        const ja = await translate("ja", item.prompt, ac.signal);
+        if (ac.signal.aborted) return;
+        await patch((x) => {
+          x.promptJa = ja;
+          x.promptFrom = ja;
+          x.promptEdited = false;
+        });
+      }
+    } catch (e) {
+      if (!ac.signal.aborted) setTranslateError(`訳せませんでした:${e instanceof Error ? e.message : String(e)}`);
+    } finally {
+      if (translation.current === ac) {
+        translation.current = null;
+        setTranslating("");
+      }
+    }
+  };
+
+  // 日本語を直したら、手が止まって少し経ってから英語に訳し直す
+  const working = mine && busy;
+  useEffect(() => {
+    if (!stale || working) return;
+    const timer = setTimeout(() => void translateHere("en"), 1500);
+    return () => clearTimeout(timer);
+  }, [item.promptJa, item.promptFrom, working]);
+
+  useEffect(() => () => translation.current?.abort(), []);
+
+  const editJa = (value: string) => {
+    translation.current?.abort();
+    setTranslateError("");
+    void patch((x) => void (x.promptJa = value));
+  };
+
+  const editEn = (value: string) => {
+    // 直接直した英語は、日本語を直すまでそのまま使う
+    if (translating === "en") translation.current?.abort();
+    void patch((x) => {
+      x.prompt = value;
+      x.promptFrom = x.promptJa;
+      x.promptEdited = !!x.promptJa?.trim();
+    });
+  };
+
   const generate = () =>
     void control.start(docId, item.id, async (signal, stage) => {
+      translation.current?.abort();
+      let current = item;
+      if (stale) {
+        // 訳し直しが済んでいなければ、先に訳してから描く
+        stage("英語に訳しています");
+        const ja = item.promptJa ?? "";
+        const en = await translate("en", ja, signal);
+        current = { ...item, prompt: en, promptFrom: ja, promptEdited: false };
+        await patch((x) => {
+          x.prompt = en;
+          x.promptFrom = ja;
+          x.promptEdited = false;
+        });
+      }
       const m = models ?? (await detectComfy(settings));
       for (let n = 0; n < count; n++) {
         const prefix = count > 1 ? `${n + 1}/${count}枚目:` : "";
         const seed = Math.floor(Math.random() * MAX_SEED);
         const [width, height] = item.size ?? [k.width, k.height];
         // LoRA がなければ、参照せず説明文だけで描く
-        const target = m.editLora ? item : { ...item, noReference: true };
+        const target = m.editLora ? current : { ...current, noReference: true };
         const prompt = fullArtPrompt(art, target);
         const references = [];
         for (const f of artReferences(art, target)) references.push({ name: `notos_${f}.png`, bytes: await loadArt(docId, f) });
@@ -239,16 +340,49 @@ function ArtItemCard(props: {
         </div>
       )}
 
-      <label className="field">
-        <span>{item.kind === "sheet" ? "外見の説明(英語。ほかの画像にも使います)" : "絵の説明(英語)"}</span>
-        <textarea rows={3} value={item.prompt} onChange={(e) => void patch((x) => void (x.prompt = e.target.value))} />
-      </label>
+      <div className="art-bilingual">
+        <label className="field">
+          <span>{item.kind === "sheet" ? "外見の説明(日本語。直すと英語も直ります)" : "絵の説明(日本語。直すと英語も直ります)"}</span>
+          <textarea
+            rows={5}
+            value={item.promptJa ?? ""}
+            placeholder={item.prompt.trim() ? "「英語から日本語を作る」で訳せます" : "「説明文を作る」で作るか、日本語で書いてください"}
+            onChange={(e) => editJa(e.target.value)}
+          />
+        </label>
+        <label className="field">
+          <span>{item.kind === "sheet" ? "英語(画像の生成とほかの画像に使います)" : "英語(画像の生成に使います)"}</span>
+          <textarea rows={5} className={stale ? "art-stale" : undefined} value={item.prompt} onChange={(e) => editEn(e.target.value)} />
+        </label>
+      </div>
+      <div className="row wrap">
+        {translating === "en" ? (
+          <span className="running small-text">● 英語に訳しています</span>
+        ) : translating === "ja" ? (
+          <span className="running small-text">● 日本語に訳しています</span>
+        ) : stale ? (
+          <span className="muted small-text">日本語を直しました。少し経つと英語に訳し直します</span>
+        ) : item.promptEdited ? (
+          <span className="muted small-text">英語を直接直しました(日本語には反映されていません)</span>
+        ) : null}
+        {!translating && item.prompt.trim() && (!item.promptJa?.trim() || item.promptEdited) && (
+          <button className="small" disabled={working} onClick={() => void translateHere("ja")}>
+            英語から日本語を作る
+          </button>
+        )}
+        {!translating && translateError && stale && (
+          <button className="small" disabled={working} onClick={() => void translateHere("en")}>
+            英語に訳し直す
+          </button>
+        )}
+      </div>
+      {translateError && <p className="error small-text">{translateError}</p>}
 
       <div className="row wrap">
         <button className="small" disabled={busy || props.running} onClick={writeCaption}>
           説明文を作る
         </button>
-        <button className="small primary" disabled={busy || !models || !item.prompt.trim()} onClick={generate}>
+        <button className="small primary" disabled={busy || !models || !(item.prompt.trim() || item.promptJa?.trim())} onClick={generate}>
           画像を作る
         </button>
         <select style={{ width: "auto" }} value={count} onChange={(e) => setCount(Number(e.target.value))}>

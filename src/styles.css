@@ -192,6 +192,9 @@ details > summary { cursor: pointer; padding: 4px 0; }
 .quote { font-family: "Yu Mincho", serif; background: color-mix(in srgb, var(--accent) 10%, transparent); padding: 0 6px; border-radius: 4px; }
 
 .art-people { display: flex; flex-wrap: wrap; gap: 4px 12px; align-items: center; }
+.art-bilingual { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: 8px; }
+.art-bilingual textarea.art-stale { opacity: 0.55; }
+@media (max-width: 720px) { .art-bilingual { grid-template-columns: minmax(0, 1fr); } }
 .art-gallery { display: flex; flex-wrap: wrap; gap: 8px; }
 .art-thumb { padding: 0; width: 120px; height: 160px; background: var(--line); border: 2px solid transparent; border-radius: 6px; overflow: hidden; display: grid; place-items: center; }
 .art-thumb img { width: 100%; height: 100%; object-fit: contain; display: block; }
