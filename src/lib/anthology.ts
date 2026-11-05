@@ -221,6 +221,8 @@ export function duplicateAnthology(a: Anthology, withConcepts: boolean): Antholo
   copy.createdAt = now;
   copy.updatedAt = now;
   copy.title = `${a.title}(複製)`;
+  // 画像のファイルは元の連載のものなので、引き継がない
+  delete copy.art;
   copy.cast = (copy.cast ?? []).map((c) => ({ ...c, id: castId.get(c.id) ?? newId(), history: [] }));
   for (const kind of ENTRY_KINDS) {
     if (!copy.shared?.[kind]) continue;

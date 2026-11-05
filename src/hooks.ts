@@ -27,6 +27,14 @@ export interface Job {
   historyOnly?: boolean;
 }
 
+/** 画像の作業の状態 */
+export interface ArtJob {
+  docId: string;
+  itemId: string;
+  stage: string;
+  error: string;
+}
+
 const clock = (d: Date) => d.toLocaleTimeString("ja-JP", { hour12: false });
 
 function duration(ms: number): string {
@@ -51,6 +59,8 @@ export function useStoryManager(settings: Settings) {
   const abort = useRef<AbortController | null>(null);
   const settingsRef = useRef(settings);
   settingsRef.current = settings;
+  const [artJob, setArtJob] = useState<ArtJob | null>(null);
+  const artAbort = useRef<AbortController | null>(null);
 
   const flush = useCallback(async () => {
     window.clearTimeout(timer.current);
@@ -248,6 +258,36 @@ export function useStoryManager(settings: Settings) {
 
   const stop = useCallback(() => abort.current?.abort(), []);
 
+  /** 開いていないドキュメントも書き換える(画像の生成中に別の物語を開いても、作った画像を元の物語に残すため) */
+  const updateDoc = useCallback(
+    async (id: string, mutator: (draft: Doc) => void) => {
+      if (ref.current?.id === id) return mutate(mutator);
+      const d = await loadStory(id);
+      mutator(d);
+      d.updatedAt = new Date().toISOString();
+      await saveStory(d);
+    },
+    [mutate],
+  );
+
+  /** 画像の作業。本文の生成とは別に、画面を移動しても続ける */
+  const startArt = useCallback(async (docId: string, itemId: string, work: (signal: AbortSignal, stage: (text: string) => void) => Promise<void>) => {
+    if (artAbort.current) return;
+    const controller = new AbortController();
+    artAbort.current = controller;
+    setArtJob({ docId, itemId, stage: "準備中", error: "" });
+    try {
+      await work(controller.signal, (stage) => setArtJob((j) => j && { ...j, stage }));
+      setArtJob(null);
+    } catch (e) {
+      setArtJob(controller.signal.aborted ? null : { docId, itemId, stage: "", error: e instanceof Error ? e.message : String(e) });
+    } finally {
+      artAbort.current = null;
+    }
+  }, []);
+
+  const stopArt = useCallback(() => artAbort.current?.abort(), []);
+
   useEffect(() => {
     const onHide = () => {
       if (ref.current) void saveStory(ref.current);
@@ -256,5 +296,7 @@ export function useStoryManager(settings: Settings) {
     return () => window.removeEventListener("beforeunload", onHide);
   }, []);
 
-  return { doc, story: isAnthology(doc) ? null : doc, anthology: isAnthology(doc) ? doc : null, run, mutate, open, adopt, close, remove, start, execute, stop, flush };
+  const art = { job: artJob, start: startArt, stop: stopArt, update: updateDoc };
+
+  return { doc, story: isAnthology(doc) ? null : doc, anthology: isAnthology(doc) ? doc : null, run, mutate, open, adopt, close, remove, start, execute, stop, flush, art };
 }

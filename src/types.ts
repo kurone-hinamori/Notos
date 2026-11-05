@@ -138,6 +138,8 @@ export interface Story {
   castIds?: string[];
   /** 短編集の話を生成するとき、短編集側から渡される共有情報(生成の直前に設定される) */
   shared?: SharedContext;
+  /** 表紙・挿絵など(長編のみ。短編集・連載は全体で持つ) */
+  art?: ArtSet;
 }
 
 /** 短編集の共通の登場人物。話をまたいで同一人物として扱う。 */
@@ -264,6 +266,50 @@ export interface Anthology {
   format?: "anthology" | "kakuyomu";
   /** カクヨム連載の掲載情報 */
   kakuyomu?: KakuyomuInfo;
+  /** 表紙・挿絵など */
+  art?: ArtSet;
+}
+
+/** 画像の種類。ART_KINDS(lib/art.ts)に足すと、画面に同じ形で並ぶ */
+export type ArtKind = "sheet" | "cover" | "frontispiece" | "cast" | "map" | "chapter" | "illustration" | "promo" | "free";
+
+/** 生成した画像の1枚。中身は別のファイルに保存する */
+export interface ArtImage {
+  file: string;
+  seed: number;
+  /** 生成に使った全文 */
+  prompt: string;
+  width: number;
+  height: number;
+  createdAt: string;
+}
+
+/** 画像の1項目(候補を何枚か作り、1枚を採用する) */
+export interface ArtItem {
+  id: string;
+  kind: ArtKind;
+  title: string;
+  /** 英語の説明。キャラクターシートでは、その人物の外見(他の画像にも使う) */
+  prompt: string;
+  /** キャラクターシート:対象の人物。ほかの画像:描く人物 */
+  characters: string[];
+  /** 場所。話の id または ch{章の番号} */
+  place?: string;
+  /** 挿絵:この場面の後に入れる(0始まり) */
+  scene?: number;
+  /** 自由な画像の大きさ */
+  size?: [number, number];
+  /** 表紙:題名と著者名を入れる。未設定は入れる */
+  coverText?: boolean;
+  images: ArtImage[];
+  /** 採用した画像の file */
+  chosen?: string;
+}
+
+export interface ArtSet {
+  /** 全画像に共通する画風(英語) */
+  style: string;
+  items: ArtItem[];
 }
 
 export type Doc = Story | Anthology;
@@ -293,6 +339,8 @@ export interface StorySummary {
 
 export interface Settings {
   ollamaUrl: string;
+  /** 画像生成に使う ComfyUI の URL */
+  comfyUrl: string;
   model: string;
   temperature: number;
   numCtx: number;
@@ -305,6 +353,7 @@ export interface Settings {
 
 export const DEFAULT_SETTINGS: Settings = {
   ollamaUrl: "http://127.0.0.1:11434",
+  comfyUrl: "http://127.0.0.1:8188",
   model: "",
   temperature: 0.8,
   numCtx: 16384,

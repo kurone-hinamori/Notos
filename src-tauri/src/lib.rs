@@ -133,6 +133,66 @@ fn delete_story(app: AppHandle, id: String) -> Result<(), String> {
     if path.exists() {
         fs::remove_file(path).map_err(|e| e.to_string())?;
     }
+    let art = art_dir(&app, &id)?;
+    if art.exists() {
+        fs::remove_dir_all(art).map_err(|e| e.to_string())?;
+    }
+    Ok(())
+}
+
+/// 物語ごとの画像の置き場所。本文の JSON が大きくならないよう、画像は別のファイルにする。
+fn art_dir(app: &AppHandle, id: &str) -> Result<PathBuf, String> {
+    if !valid_id(id) {
+        return Err("invalid story id".into());
+    }
+    Ok(app
+        .path()
+        .app_data_dir()
+        .map_err(|e| e.to_string())?
+        .join("art")
+        .join(id))
+}
+
+fn art_path(app: &AppHandle, id: &str, file: &str) -> Result<PathBuf, String> {
+    if !valid_id(file) {
+        return Err("invalid art id".into());
+    }
+    Ok(art_dir(app, id)?.join(format!("{file}.png")))
+}
+
+/// 画像の中身をそのまま受け取る(id と file はヘッダーで渡す)。
+#[tauri::command]
+fn save_art(app: AppHandle, request: tauri::ipc::Request) -> Result<(), String> {
+    let header = |name: &str| {
+        request
+            .headers()
+            .get(name)
+            .and_then(|v| v.to_str().ok())
+            .map(str::to_string)
+            .ok_or_else(|| format!("missing {name}"))
+    };
+    let tauri::ipc::InvokeBody::Raw(bytes) = request.body() else {
+        return Err("image bytes expected".into());
+    };
+    let path = art_path(&app, &header("story")?, &header("file")?)?;
+    if let Some(dir) = path.parent() {
+        fs::create_dir_all(dir).map_err(|e| e.to_string())?;
+    }
+    fs::write(path, bytes).map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+fn load_art(app: AppHandle, id: String, file: String) -> Result<tauri::ipc::Response, String> {
+    let bytes = fs::read(art_path(&app, &id, &file)?).map_err(|e| e.to_string())?;
+    Ok(tauri::ipc::Response::new(bytes))
+}
+
+#[tauri::command]
+fn delete_art(app: AppHandle, id: String, file: String) -> Result<(), String> {
+    let path = art_path(&app, &id, &file)?;
+    if path.exists() {
+        fs::remove_file(path).map_err(|e| e.to_string())?;
+    }
     Ok(())
 }
 
@@ -155,7 +215,10 @@ pub fn run() {
             list_stories,
             load_story,
             save_story,
-            delete_story
+            delete_story,
+            save_art,
+            load_art,
+            delete_art
         ])
         .run(tauri::generate_context!())
         .expect("error while running Notos");

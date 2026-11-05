@@ -54,6 +54,8 @@ export const outlineSchema = obj({
 
 export const digestSchema = obj({ digest: str });
 
+export const artCaptionSchema = obj({ caption: str, characters: arr(str) });
+
 /** 本文から抽出した設定資料への追記 */
 export const bibleUpdateSchema = obj({
   characters: arr(obj({ ...(characterSheet.properties as Record<string, Schema>), notes: str })),

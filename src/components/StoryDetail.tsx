@@ -9,6 +9,7 @@ import { BodyTab } from "./tabs/BodyTab";
 import { BibleTab } from "./tabs/BibleTab";
 import { ProductionTab } from "./tabs/ProductionTab";
 import { ExportTab } from "./tabs/ExportTab";
+import { ArtTab, type ArtControl } from "./tabs/ArtTab";
 import { novelBook } from "../lib/epub";
 
 export type Mutate = (m: (draft: Story) => void) => void;
@@ -32,6 +33,7 @@ export function StoryDetail(props: {
   mutate: Mutate;
   start: (t: Task) => void;
   stop: () => void;
+  art: ArtControl;
   onBack: () => void;
 }) {
   const { story, run, mutate } = props;
@@ -76,7 +78,7 @@ export function StoryDetail(props: {
       )}
       {tab === "body" && <BodyTab story={story} mutate={mutate} start={props.start} running={run.running} />}
       {tab === "bible" && <BibleTab story={story} mutate={mutate} start={props.start} running={run.running} />}
-      {tab === "art" && <ArtTab />}
+      {tab === "art" && <ArtTab doc={story} settings={props.settings} running={run.running} art={props.art} />}
       {tab === "export" && (
         <ExportTab
           title={story.title}
@@ -85,29 +87,9 @@ export function StoryDetail(props: {
           onAuthor={(v) => mutate((s) => void (s.author = v))}
           hasBody={story.chapters.some((c) => c.body)}
           makeBook={(author, includeBible) => novelBook(story, author, includeBible)}
+          doc={story}
         />
       )}
-    </div>
-  );
-}
-
-export function ArtTab() {
-  const items = [
-    ["表紙", "物語の世界観に合わせた表紙イラスト"],
-    ["カラー口絵", "巻頭を飾るカラーイラスト"],
-    ["挿絵(白黒)", "場面ごとの白黒挿絵"],
-  ];
-  return (
-    <div className="grid">
-      {items.map(([title, desc]) => (
-        <section key={title} className="card placeholder">
-          <h3>{title}</h3>
-          <p className="muted">{desc}</p>
-          <div className="soon">準備中</div>
-          <small className="muted">画像生成アプリとの連携機能は今後追加予定です。</small>
-          <button disabled>生成する</button>
-        </section>
-      ))}
     </div>
   );
 }

@@ -1,6 +1,6 @@
 import type { Bible, BookPlan, Chapter, CharacterSheet, Concept, Entry, EntryKind, Issue, KakuyomuInfo, Settings, SharedContext, SpeechBracket, Story } from "../types";
 import { emptyBible, KAKUYOMU_CATCHCOPY_MAX, KAKUYOMU_FIXED_TAGS, KAKUYOMU_POST_MIN, KAKUYOMU_TAGS_MAX, withFixedTags } from "../types";
-import { chat, chatJson } from "./ollama";
+import { chat, chatJson, type ChatMessage } from "./ollama";
 import {
   biblePrompt,
   bibleUpdatePrompt,
@@ -25,6 +25,7 @@ import {
 } from "./prompts";
 import {
   bibleUpdateSchema,
+  artCaptionSchema,
   bibleSchema,
   conceptSchema,
   digestSchema,
@@ -427,6 +428,14 @@ export async function generateSeriesTitles(
     .map((x) => x.trim().replace(/^「([^「」]*)」$/, "$1").replace(/^『([^『』]*)』$/, "$1").trim())
     .filter(Boolean);
   return [...new Set(titles)].filter((x) => x !== opts.current.trim());
+}
+
+/** 画像生成に渡す英語の説明文を考える */
+export async function generateArtCaption(settings: Settings, messages: ChatMessage[], signal?: AbortSignal): Promise<{ caption: string; characters: string[] }> {
+  const r = await chatJson<{ caption: string; characters: string[] }>(settings, { messages, schema: artCaptionSchema, temperature: 0.7, signal });
+  const caption = (r.caption ?? "").trim();
+  if (!caption) throw new Error("説明文を作れませんでした");
+  return { caption, characters: r.characters ?? [] };
 }
 
 /** カクヨム連載:キャッチコピー・紹介文・タグを考える(上限を超えたら作り直し、それでも超えたら切り詰める) */

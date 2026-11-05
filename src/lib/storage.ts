@@ -8,6 +8,10 @@ export const loadStory = (id: string) => invoke<Doc>("load_story", { id });
 export const saveStory = (story: Doc) => invoke<void>("save_story", { story });
 export const deleteStory = (id: string) => invoke<void>("delete_story", { id });
 
+export const saveArt = (story: string, file: string, bytes: Uint8Array) => invoke<void>("save_art", bytes, { headers: { story, file } });
+export const loadArt = async (id: string, file: string) => new Uint8Array(await invoke<ArrayBuffer>("load_art", { id, file }));
+export const deleteArt = (id: string, file: string) => invoke<void>("delete_art", { id, file });
+
 export function createStory(concept: Concept, keywords: string[], author: string, note = "", lines: string[] = []): Story {
   const now = new Date().toISOString();
   return {

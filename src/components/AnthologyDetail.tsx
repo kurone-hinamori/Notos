@@ -7,7 +7,8 @@ import { createEpisode, isUndecided } from "../lib/storage";
 import { anthologyBook } from "../lib/epub";
 import { countChars, storyChars } from "../lib/text";
 import { ConceptGacha, cleanKeywords, initialGacha, type GachaState } from "./ConceptGacha";
-import { ArtTab, type Mutate } from "./StoryDetail";
+import type { Mutate } from "./StoryDetail";
+import { ArtTab, type ArtControl } from "./tabs/ArtTab";
 import { OverviewTab } from "./tabs/OverviewTab";
 import { ProductionTab } from "./tabs/ProductionTab";
 import { SceneBodyTab } from "./tabs/SceneBodyTab";
@@ -96,6 +97,7 @@ export function AnthologyDetail(props: {
   start: (t: Task, episode: number) => void;
   execute: (jobs: Job[]) => void;
   stop: () => void;
+  art: ArtControl;
   onBack: () => void;
   /** 複製して作り直す(新しく作れるのはカクヨム連載だけなので、短編集では渡さない) */
   onDuplicate?: () => void;
@@ -392,7 +394,7 @@ export function AnthologyDetail(props: {
         />
       )}
       {tab === "kakuyomu" && <KakuyomuPosts anthology={a} mutate={mutate} start={props.start} running={run.running} settings={props.settings} />}
-      {tab === "art" && <ArtTab />}
+      {tab === "art" && <ArtTab doc={a} settings={props.settings} running={run.running} art={props.art} />}
       {tab === "export" && (
         <ExportTab
           title={a.title}
@@ -402,6 +404,7 @@ export function AnthologyDetail(props: {
           hasBody={a.episodes.some((e) => e.chapters.some((c) => c.body))}
           note="本文のある話だけを、話の順に1冊にまとめます(各話が目次の1項目になります)。"
           makeBook={(author, includeBible) => anthologyBook(a, author, includeBible)}
+          doc={a}
         />
       )}
     </div>

@@ -1,6 +1,7 @@
 import JSZip from "jszip";
 import type { Anthology, Bible, Story } from "../types";
 import { rubiedPostsOf, rubyRulesOf } from "./anthology";
+import type { BookArt } from "./art";
 import { isNoIndentLine, parseNotation, withRubies } from "./notation";
 
 /** EPUB にする本の中身(長編・短編集の共通形式) */
@@ -9,9 +10,13 @@ export interface Book {
   tagline: string;
   author: string;
   synopsis: string;
-  chapters: { heading: string; body: string }[];
+  /** key は挿絵の場所の指定(話の id または ch{章の番号}) */
+  chapters: { key: string; heading: string; body: string }[];
   appendix: { title: string; html: string }[];
 }
+
+const NO_ART: BookArt = { front: [], heads: {}, scenes: {} };
+const imageTag = (file: string) => `<div class="illust"><img src="images/${file}.jpg" alt=""/></div>`;
 
 const esc = (s: string) =>
   s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;");
@@ -36,12 +41,18 @@ function richInline(text: string): string {
     .join("");
 }
 
-function paragraphs(body: string): string {
+function paragraphs(body: string, images: { scene: number; file: string }[] = []): string {
   const out: string[] = [];
   let blank = false;
+  let scene = 0;
+  const imagesOf = (test: (s: number) => boolean) => out.push(...images.filter((x) => test(x.scene)).map((x) => imageTag(x.file)));
   for (const line of body.split("\n")) {
     if (!line.trim()) {
-      if (!blank && out.length) out.push('<p class="sb">&#160;</p>');
+      if (!blank && out.length) {
+        imagesOf((s) => s === scene);
+        scene++;
+        out.push('<p class="sb">&#160;</p>');
+      }
       blank = true;
       continue;
     }
@@ -49,6 +60,8 @@ function paragraphs(body: string): string {
     const text = line.trim();
     out.push(`<p${isNoIndentLine(text) ? ' class="nd"' : ""}>${richInline(text)}</p>`);
   }
+  // 本文を書き直して場面が減った場合も、絵は最後に残す
+  imagesOf((s) => s >= scene);
   return out.join("\n");
 }
 
@@ -99,6 +112,8 @@ h3 { font-size: 1em; font-weight: bold; margin: 0 1em 0 0; text-indent: 0; }
 .colophon p { text-indent: 0; margin-left: 0.5em; }
 .bible p { text-indent: 0; margin-left: 0.4em; }
 ul.toc { list-style: none; padding: 0; margin: 0; }
+.illust { page-break-before: always; page-break-after: always; text-align: center; text-indent: 0; margin: 0; }
+.illust img { max-width: 100%; max-height: 100%; }
 `;
 
 function bibleSections(b: Bible): { title: string; html: string }[] {
@@ -164,7 +179,7 @@ export function novelBook(story: Story, author: string, includeBible: boolean): 
     tagline: story.tagline,
     author,
     synopsis: story.synopsis,
-    chapters: story.chapters.map((c, i) => ({ heading: `第${i + 1}章　${c.title}`, body: withRubies(c.body, rules) })),
+    chapters: story.chapters.map((c, i) => ({ key: `ch${i}`, heading: `第${i + 1}章　${c.title}`, body: withRubies(c.body, rules) })),
     appendix: includeBible && story.bible.generated ? bibleSections(story.bible).map((s) => ({ title: `設定資料 ${s.title}`, html: s.html })) : [],
   };
 }
@@ -178,6 +193,7 @@ export function anthologyBook(a: Anthology, author: string, includeBible: boolea
     author,
     synopsis: eps.map(({ e, n }) => `第${n}話 ${e.title}`).join(" / "),
     chapters: eps.map(({ e, n }) => ({
+      key: e.id,
       heading: `第${n}話　${e.title}`,
       // カクヨム連載は、各回のサブタイトルを見出しとして入れる
       body:
@@ -195,7 +211,8 @@ export function anthologyBook(a: Anthology, author: string, includeBible: boolea
   };
 }
 
-export async function buildEpub(book: Book): Promise<Uint8Array> {
+/** art を渡すと、load で読み込んだ JPEG を本に入れる */
+export async function buildEpub(book: Book, art: BookArt = NO_ART, load?: (file: string) => Promise<Uint8Array>): Promise<Uint8Array> {
   const zip = new JSZip();
   zip.file("mimetype", "application/epub+zip", { compression: "STORE" });
   zip.file(
@@ -210,6 +227,10 @@ export async function buildEpub(book: Book): Promise<Uint8Array> {
   const pages: Page[] = [];
   const author = book.author.trim() || "Notos";
 
+  if (art.cover) {
+    pages.push({ id: "coverpage", file: "cover.xhtml", title: "表紙", nav: false, html: xhtml("表紙", imageTag(art.cover)) });
+  }
+
   pages.push({
     id: "titlepage",
     file: "titlepage.xhtml",
@@ -223,16 +244,33 @@ export async function buildEpub(book: Book): Promise<Uint8Array> {
     ),
   });
 
+  art.front.forEach((file, i) => {
+    pages.push({ id: `front${i + 1}`, file: `front${i + 1}.xhtml`, title: book.title, nav: false, html: xhtml(book.title, imageTag(file)) });
+  });
+
   book.chapters.forEach((c, i) => {
     const heading = c.heading;
+    const head = art.heads[c.key];
     pages.push({
       id: `chapter${i + 1}`,
       file: `chapter${i + 1}.xhtml`,
       title: heading,
       nav: true,
-      html: xhtml(heading, `<h1 class="chapter-head">${inline(heading)}</h1>\n${paragraphs(c.body)}`),
+      html: xhtml(heading, `${head ? `${imageTag(head)}\n` : ""}<h1 class="chapter-head">${inline(heading)}</h1>\n${paragraphs(c.body, art.scenes[c.key])}`),
     });
   });
+
+  // 実際に本に入る章の画像だけを読み込む
+  const files = new Set([
+    ...(art.cover ? [art.cover] : []),
+    ...art.front,
+    ...book.chapters.flatMap((c) => [...(art.heads[c.key] ? [art.heads[c.key]] : []), ...(art.scenes[c.key] ?? []).map((x) => x.file)]),
+  ]);
+  if (files.size && !load) throw new Error("画像を読み込めません");
+  for (const file of files) zip.file(`OEBPS/images/${file}.jpg`, await load!(file));
+  const imageItems = [...files]
+    .map((file) => `<item id="img-${file}" href="images/${file}.jpg" media-type="image/jpeg"${file === art.cover ? ' properties="cover-image"' : ""}/>`)
+    .join("\n    ");
 
   book.appendix.forEach((sec, i) => {
     pages.push({
@@ -276,13 +314,13 @@ export async function buildEpub(book: Book): Promise<Uint8Array> {
     <dc:creator>${esc(author)}</dc:creator>
     <dc:language>ja</dc:language>
     <dc:description>${esc(book.synopsis)}</dc:description>
-    <meta property="dcterms:modified">${modified}</meta>
+    <meta property="dcterms:modified">${modified}</meta>${art.cover ? `\n    <meta name="cover" content="img-${art.cover}"/>` : ""}
   </metadata>
   <manifest>
     <item id="nav" href="nav.xhtml" media-type="application/xhtml+xml" properties="nav"/>
     <item id="ncx" href="toc.ncx" media-type="application/x-dtbncx+xml"/>
     <item id="css" href="style.css" media-type="text/css"/>
-    ${manifest}
+    ${manifest}${imageItems ? `\n    ${imageItems}` : ""}
   </manifest>
   <spine toc="ncx" page-progression-direction="rtl">
     ${spine}

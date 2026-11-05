@@ -64,6 +64,11 @@ export function SettingsView(props: { settings: Settings; generating: boolean; o
         <h2>設定</h2>
       </header>
       <section className="card">
+        <h3>画像生成(ComfyUI)</h3>
+        <Field label="ComfyUI の URL" value={settings.comfyUrl} onChange={(v) => onChange({ ...settings, comfyUrl: v })} />
+        <small className="muted">表紙や挿絵は、起動中の ComfyUI の MOSS-Image で作ります。接続の確認は各作品の「表紙・挿絵」タブで行えます。</small>
+      </section>
+      <section className="card">
         <h3>ローカルLLM(Ollama)</h3>
         <Field label="Ollama の URL" value={settings.ollamaUrl} onChange={(v) => onChange({ ...settings, ollamaUrl: v })} />
         <div className="row">

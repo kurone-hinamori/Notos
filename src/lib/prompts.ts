@@ -1,5 +1,5 @@
 import type { ChatMessage } from "./ollama";
-import type { Bible, BookPlan, SharedContext, SharedEntryContext, Story } from "../types";
+import type { Bible, BookPlan, CharacterSheet, SharedContext, SharedEntryContext, Story } from "../types";
 import { bibleToText, dialogueLines, splitScenes, tail } from "./text";
 
 const EDITOR = "あなたは「小説家になろう」「カクヨム」で人気作を数多く手がけてきた、ライトノベル作家兼編集者です。";
@@ -462,6 +462,68 @@ ${ch.body}
 - 既存の項目(${known.join("、")})については、本文で新たに判明した事実・状態の変化(負傷、所持品、関係の変化、新たな呼称など)だけを notes に書く。設定資料に既にある内容は書かない。
 - 本文に書かれていないことを創作しない。追記がなければ空配列にする。
 - 既存項目に追記する場合は name を既存と完全に同じ表記にし、他のフィールドは空文字にする。`,
+    },
+  ];
+}
+
+const ART_SAFE_RULE = "性的な描写・裸・下着・過度な流血は書かず、一般向けの書籍に載せられる内容にする。";
+
+/** キャラクターシートに使う、人物の外見の英語の説明 */
+export function artLooksPrompt(opts: { title: string; genre: string; world: string; character: CharacterSheet }): ChatMessage[] {
+  const c = opts.character;
+  return [
+    { role: "system", content: "あなたは小説の挿絵のキャラクターデザイナーです。画像生成モデルに渡す、人物の外見の英語の説明を書きます。" },
+    {
+      role: "user",
+      content: `次の人物の外見を、キャラクターシートに使う英語の説明にしてください。
+
+【作品】${opts.title}(${opts.genre})
+【世界観】${opts.world.slice(0, 600)}
+【人物】${c.name}
+役割:${c.role}
+年齢:${c.age}
+外見:${c.appearance}
+性格:${c.personality}
+
+【守ること】
+- caption に、完成した絵の描写として英語の1段落(30〜70語)で書く。年齢に合った見た目、体格、髪型と髪の色、目の色、表情の傾向、服装と持ち物を具体的に書く。
+- 外見の記述がない部分は、作品の雰囲気に合わせて決める。同じ人物をほかの絵でも描くので、はっきり見分けられる特徴を入れる。
+- 人物そのものだけを書き、場所・背景・その場の動きは書かない。
+- 日本語の名前は書かない。${ART_SAFE_RULE}
+- characters は空の配列にする。`,
+    },
+  ];
+}
+
+/** 画像の説明文(人物の外見は別に足すので、ここでは書かせない) */
+export function artCaptionPrompt(opts: {
+  kind: string;
+  title: string;
+  genre: string;
+  world: string;
+  synopsis: string;
+  scene: string;
+  request: string;
+  characters: CharacterSheet[];
+}): ChatMessage[] {
+  const cast = opts.characters.map((c) => `- ${c.name}:${c.role} ${c.appearance}`.slice(0, 200)).join("\n");
+  return [
+    { role: "system", content: "あなたは小説の挿絵のアートディレクターです。画像生成モデルに渡す、完成した絵の英語の説明を書きます。" },
+    {
+      role: "user",
+      content: `次の小説の「${opts.kind}」の絵の説明を書いてください。
+
+【作品】${opts.title}(${opts.genre})
+【世界観】${opts.world.slice(0, 600)}
+【あらすじ】${opts.synopsis.slice(0, 800)}${opts.request ? `\n【作者の希望】${opts.request}` : ""}${opts.scene ? `\n【描く場面の本文】\n${opts.scene.slice(0, 3000)}` : ""}
+【人物】
+${cast || "(なし)"}
+
+【守ること】
+- caption に、依頼文ではなく完成した絵の描写として、英語の1段落(40〜90語)で書く。構図、場所、光、雰囲気、人物の動きと表情を具体的に書く。
+- 人物の髪・目・服装は別に足すので書かない。人物は名前ではなく "the young woman" のように呼ぶ。
+- 絵の中に文字や看板を描かせない。${ART_SAFE_RULE}
+- characters に、絵に描く人物の名前を【人物】の表記のまま入れる(多くても3人。人物を描かない絵なら空の配列)。`,
     },
   ];
 }

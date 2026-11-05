@@ -177,6 +177,7 @@ export default function App() {
             start={(t, episode) => void mgr.start(t, episode)}
             execute={(jobs) => void mgr.execute(jobs)}
             stop={mgr.stop}
+            art={mgr.art}
             onBack={() => void go({ name: view.name === "serial" ? "serials" : "anthologies" })}
             onDuplicate={view.name === "serial" ? () => void duplicateAnthology(mgr.anthology!.id) : undefined}
           />
@@ -193,6 +194,7 @@ export default function App() {
             mutate={(m) => mgr.mutate((d) => m(d as Story))}
             start={(t) => void mgr.start(t)}
             stop={mgr.stop}
+            art={mgr.art}
             onBack={() => void go({ name: "list" })}
           />
         )}

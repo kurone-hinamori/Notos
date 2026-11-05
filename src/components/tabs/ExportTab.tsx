@@ -1,6 +1,8 @@
 import { useState } from "react";
 import { save } from "@tauri-apps/plugin-dialog";
 import { writeFile } from "@tauri-apps/plugin-fs";
+import type { Doc } from "../../types";
+import { bookArtOf, exportArtImage } from "../../lib/art";
 import { buildEpub, type Book } from "../../lib/epub";
 import { Field, Section } from "../ui";
 
@@ -15,6 +17,8 @@ export function ExportTab(props: {
   /** 短編集の場合の補足説明 */
   note?: string;
   makeBook: (author: string, includeBible: boolean) => Book;
+  /** 「表紙・挿絵」タブで採用した画像を本に入れるために使う */
+  doc: Doc;
 }) {
   const [includeBible, setIncludeBible] = useState(false);
   const [message, setMessage] = useState("");
@@ -27,7 +31,11 @@ export function ExportTab(props: {
       const safe = props.title.replace(/[\\/:*?"<>|]/g, "_").slice(0, 80) || "notos";
       const path = await save({ defaultPath: `${safe}.epub`, filters: [{ name: "EPUB", extensions: ["epub"] }] });
       if (!path) return;
-      const data = await buildEpub(props.makeBook(props.author || props.defaultAuthor, includeBible));
+      const author = props.author || props.defaultAuthor;
+      const items = props.doc.art?.items ?? [];
+      const data = await buildEpub(props.makeBook(author, includeBible), bookArtOf(props.doc.art), (file) =>
+        exportArtImage(props.doc, items.find((i) => i.images.some((x) => x.file === file)), file, author),
+      );
       await writeFile(path, data);
       setMessage(`保存しました:${path}`);
     } catch (e) {
@@ -40,7 +48,7 @@ export function ExportTab(props: {
   return (
     <div className="stack">
       <Section title="縦書きEPUBの出力">
-        <p className="muted">縦書き・右開き(右から左へ読み進める)のEPUB 3 を出力します。章ごとに目次が付きます。</p>
+        <p className="muted">縦書き・右開き(右から左へ読み進める)のEPUB 3 を出力します。章ごとに目次が付きます。「表紙・挿絵」タブで作った表紙・口絵・章扉・挿絵も入ります。</p>
         {props.note && <p className="muted">{props.note}</p>}
         <Field
           label="著者名(空欄の場合は設定画面の筆名)"
