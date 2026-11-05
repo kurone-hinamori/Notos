@@ -28,6 +28,8 @@ export interface ComfyModels {
   vae: string;
   /** 拡大用のモデル。なければ通常の拡大をする */
   upscale?: string;
+  /** 画像を参照するための LoRA。なければ説明文だけで描く */
+  editLora?: string;
 }
 
 async function modelsOf(s: Url, node: string, input: string): Promise<string[]> {
@@ -39,11 +41,12 @@ async function modelsOf(s: Url, node: string, input: string): Promise<string[]> 
 
 /** MOSS-Image に必要なモデルを探す。足りないときは、足りないファイルを示すエラーにする */
 export async function detectComfy(s: Url): Promise<ComfyModels> {
-  const [unets, clips, vaes, upscales] = await Promise.all([
+  const [unets, clips, vaes, upscales, loras] = await Promise.all([
     modelsOf(s, "UNETLoader", "unet_name"),
     modelsOf(s, "CLIPLoader", "clip_name"),
     modelsOf(s, "VAELoader", "vae_name"),
     modelsOf(s, "UpscaleModelLoader", "model_name").catch(() => [] as string[]),
+    modelsOf(s, "LoraLoaderModelOnly", "lora_name").catch(() => [] as string[]),
   ]);
   const unet = unets.find((m) => m.startsWith("moss_image_sft")) ?? unets.find((m) => m.startsWith("moss_image_base"));
   const clip = clips.find((m) => m.startsWith("qwen3.5_9b"));
@@ -54,7 +57,7 @@ export async function detectComfy(s: Url): Promise<ComfyModels> {
     !vae && "flux2-vae_small.safetensors(models/vae)",
   ].filter(Boolean);
   if (missing.length) throw new Error(`MOSS-Image のモデルが見つかりません:${missing.join("、")}`);
-  return { unet: unet!, clip: clip!, vae: vae!, upscale: upscales.find((m) => /anime/i.test(m)) ?? upscales[0] };
+  return { unet: unet!, clip: clip!, vae: vae!, upscale: upscales.find((m) => /anime/i.test(m)) ?? upscales[0], editLora: loras.find((m) => m.startsWith("moss_image_edit")) };
 }
 
 /** 公式の推奨。短く保つ。作品は書籍として出すので、nsfw は常に入れる */
@@ -67,6 +70,8 @@ export interface ImageRequest {
   /** 仕上がりの大きさ。生成の大きさと違えば拡大・切り抜きする */
   final?: [number, number];
   seed: number;
+  /** 参照する画像(models.editLora があるときだけ渡す) */
+  references?: { name: string; bytes: Uint8Array }[];
 }
 
 const SAVE_NODE = "save";
@@ -97,6 +102,25 @@ export function mossWorkflow(m: ComfyModels, r: ImageRequest): Record<string, { 
     },
     decode: { class_type: "VAEDecode", inputs: { samples: ["sampler", 0], vae: ["vae", 0] } },
   };
+  // 参照あり:公式テンプレートの MOSS-Image: Image Edit と同じ設定
+  const refs = r.references ?? [];
+  if (refs.length && m.editLora) {
+    g.lora = { class_type: "LoraLoaderModelOnly", inputs: { model: ["unet", 0], lora_name: m.editLora, strength_model: 1 } };
+    g.slg = { class_type: "SkipLayerGuidanceDiTSimple", inputs: { model: ["lora", 0], double_layers: "", single_layers: "22", start_percent: 0, end_percent: 1 } };
+    const images: Record<string, [string, number]> = {};
+    refs.forEach((ref, i) => {
+      g[`ref${i}`] = { class_type: "LoadImage", inputs: { image: ref.name } };
+      g[`refScaled${i}`] = { class_type: "ImageScaleToTotalPixels", inputs: { image: [`ref${i}`, 0], upscale_method: "lanczos", megapixels: 1, resolution_steps: 16 } };
+      images[`images.image_${i}`] = [`refScaled${i}`, 0];
+    });
+    const encode = (text: string) => ({
+      class_type: "TextEncodeMOSSImageEdit",
+      inputs: { clip: ["clip", 0], prompt: text, edit_format: "Moss-Image-Edit", image_strength: 1, vae: ["vae", 0], ...images },
+    });
+    g.positive = encode(r.prompt);
+    g.negative = encode(NEGATIVE);
+    Object.assign(g.sampler.inputs, { model: ["slg", 0], steps: 30, cfg: 4, sampler_name: "euler", scheduler: "normal" });
+  }
   let image: [string, number] = ["decode", 0];
   if (r.final && (r.final[0] !== r.width || r.final[1] !== r.height)) {
     if (m.upscale && (r.final[0] > r.width || r.final[1] > r.height)) {
@@ -123,6 +147,17 @@ const sleep = (ms: number, signal?: AbortSignal) =>
     signal?.addEventListener("abort", () => (clearTimeout(t), resolve()), { once: true });
   });
 
+/** 参照する画像を ComfyUI の input フォルダーに送る(同じ名前なら上書きする) */
+async function uploadImage(s: Url, name: string, bytes: Uint8Array): Promise<string> {
+  const form = new FormData();
+  form.append("image", new Blob([bytes as BlobPart], { type: "image/png" }), name);
+  form.append("overwrite", "true");
+  const { "Content-Type": _, ...rest } = headers(s);
+  const res = await fetch(`${base(s)}/upload/image`, { method: "POST", headers: rest, body: form });
+  if (!res.ok) throw new Error(`参照する画像を送れませんでした(${res.status})`);
+  return ((await res.json()) as { name: string }).name;
+}
+
 /** 画像を1枚作って PNG で受け取る。中断すると ComfyUI 側の処理も止める */
 export async function generateImage(
   s: Url,
@@ -131,7 +166,9 @@ export async function generateImage(
   signal: AbortSignal,
   onStatus: (text: string) => void,
 ): Promise<Uint8Array> {
-  const res = await post(s, "/prompt", { prompt: mossWorkflow(models, req), client_id: "notos" });
+  const references = [];
+  for (const ref of req.references ?? []) references.push({ ...ref, name: await uploadImage(s, ref.name, ref.bytes) });
+  const res = await post(s, "/prompt", { prompt: mossWorkflow(models, { ...req, references }), client_id: "notos" });
   const sent = (await res.json().catch(() => ({}))) as { prompt_id?: string; error?: { message?: string }; node_errors?: unknown };
   if (!res.ok || !sent.prompt_id) throw new Error(`ComfyUI が受け付けませんでした:${sent.error?.message ?? res.status}`);
   const id = sent.prompt_id;

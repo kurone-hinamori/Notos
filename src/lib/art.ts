@@ -163,17 +163,42 @@ export function artPlaces(doc: Doc): ArtPlace[] {
     .filter((p) => p.scenes.length);
 }
 
-/** プロンプトの全文。画風、種類ごとの説明、説明文、人物の外見の順に並べる */
+const sheetOf = (art: ArtSet, name: string) => art.items.find((x) => x.kind === "sheet" && x.characters[0] === name);
+
+/** 参照できるのは4枚まで(公式の説明による) */
+const MAX_REFERENCES = 4;
+
+/** 参照する人物と、そのキャラクターシートの画像(file)。描く人物の順に並ぶ */
+function referencedPeople(art: ArtSet, item: ArtItem): { name: string; file: string }[] {
+  if (item.kind === "sheet" || item.noReference) return [];
+  return item.characters
+    .flatMap((name) => {
+      const sheet = sheetOf(art, name);
+      const file = sheet?.prompt.trim() ? chosenImage(sheet)?.file : undefined;
+      return file ? [{ name, file }] : [];
+    })
+    .slice(0, MAX_REFERENCES);
+}
+
+export const artReferences = (art: ArtSet, item: ArtItem) => referencedPeople(art, item).map((x) => x.file);
+
+const referenceLead = (n: number) =>
+  n === 1
+    ? "The reference image is a character design sheet. Draw this same character with the same face, hair, clothes and colors in a new single illustration. Do not copy the layout of the sheet."
+    : `The reference images are character design sheets, one for each of Character 1 to Character ${n}, in the same order. Draw these same characters with the same faces, hair, clothes and colors in a new single illustration. Do not copy the layout of the sheets.`;
+
+/**
+ * プロンプトの全文。画風、種類ごとの説明、説明文、人物の外見の順に並べる。
+ * 参照するときも説明文を併用する(画像だけでは髪の長さなどが崩れた)。
+ */
 export function fullArtPrompt(art: ArtSet, item: ArtItem): string {
   const k = ART_KINDS[item.kind];
-  const looks =
-    item.kind === "sheet"
-      ? []
-      : item.characters
-          .map((name) => art.items.find((x) => x.kind === "sheet" && x.characters[0] === name)?.prompt.trim())
-          .filter((x): x is string => !!x);
+  const referenced = referencedPeople(art, item).map((x) => x.name);
+  // 参照する人物を先に並べ、Character の番号と参照する画像の順番をそろえる
+  const names = item.kind === "sheet" ? [] : [...referenced, ...item.characters.filter((n) => !referenced.includes(n))];
+  const looks = names.map((name) => sheetOf(art, name)?.prompt.trim()).filter((x): x is string => !!x);
   const people = looks.map((x, i) => (looks.length > 1 ? `Character ${i + 1}: ${x}` : `Character: ${x}`));
-  return [art.style.trim(), k.frame, item.prompt.trim(), ...people, item.kind === "sheet" ? "Consistent design across all views, no text." : "No text."]
+  return [referenced.length ? referenceLead(referenced.length) : "", art.style.trim(), k.frame, item.prompt.trim(), ...people, item.kind === "sheet" ? "Consistent design across all views, no text." : "No text."]
     .filter(Boolean)
     .join("\n");
 }

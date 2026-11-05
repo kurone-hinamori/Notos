@@ -4,7 +4,7 @@ import { writeFile } from "@tauri-apps/plugin-fs";
 import type { ArtImage, ArtItem, ArtKind, ArtSet, CharacterSheet, Doc, Settings } from "../../types";
 import { isAnthology } from "../../types";
 import type { ArtJob } from "../../hooks";
-import { ART_KINDS, ART_KIND_ORDER, DEFAULT_ART_STYLE, artCharacters, artPlaces, chosenImage, emptyArt, exportArtImage, fullArtPrompt, newArtItem, toGrayscale } from "../../lib/art";
+import { ART_KINDS, ART_KIND_ORDER, DEFAULT_ART_STYLE, artCharacters, artPlaces, artReferences, chosenImage, emptyArt, exportArtImage, fullArtPrompt, newArtItem, toGrayscale } from "../../lib/art";
 import { detectComfy, generateImage, type ComfyModels } from "../../lib/comfy";
 import { generateArtCaption } from "../../lib/pipeline";
 import { artCaptionPrompt, artLooksPrompt } from "../../lib/prompts";
@@ -108,9 +108,13 @@ function ArtItemCard(props: {
       for (let n = 0; n < count; n++) {
         const prefix = count > 1 ? `${n + 1}/${count}枚目:` : "";
         const seed = Math.floor(Math.random() * MAX_SEED);
-        const prompt = fullArtPrompt(art, item);
         const [width, height] = item.size ?? [k.width, k.height];
-        const png = await generateImage(settings, m, { prompt, width, height, final: k.final, seed }, signal, (t) => stage(prefix + t));
+        // LoRA がなければ、参照せず説明文だけで描く
+        const target = m.editLora ? item : { ...item, noReference: true };
+        const prompt = fullArtPrompt(art, target);
+        const references = [];
+        for (const f of artReferences(art, target)) references.push({ name: `notos_${f}.png`, bytes: await loadArt(docId, f) });
+        const png = await generateImage(settings, m, { prompt, width, height, final: k.final, seed, references }, signal, (t) => stage(prefix + t));
         const bytes = k.mono ? await toGrayscale(png) : png;
         const file = newId();
         await saveArt(docId, file, bytes);
@@ -154,6 +158,7 @@ function ArtItemCard(props: {
   };
 
   const chosen = chosenImage(item);
+  const referable = artReferences(art, { ...item, noReference: false }).length;
   const sheetNames = art.items.filter((i) => i.kind === "sheet" && i.prompt.trim()).map((i) => i.characters[0]);
 
   return (
@@ -253,6 +258,12 @@ function ArtItemCard(props: {
             </option>
           ))}
         </select>
+        {models?.editLora && referable > 0 && (
+          <label className="check" title="人物の見た目が揃いやすくなりますが、時間は長くかかります">
+            <input type="checkbox" checked={!item.noReference} onChange={(e) => void patch((x) => void (x.noReference = !e.target.checked))} />
+            シートの画像を参照する({referable}人)
+          </label>
+        )}
         {item.kind === "cover" && (
           <label className="check">
             <input type="checkbox" checked={item.coverText !== false} onChange={(e) => void patch((x) => void (x.coverText = e.target.checked))} />
@@ -329,7 +340,7 @@ export function ArtTab(props: { doc: Doc; settings: Settings; running: boolean; 
     try {
       const m = await detectComfy(settings);
       setModels(m);
-      setStatus(`接続しました:${m.unet}${m.upscale ? ` / 拡大:${m.upscale}` : ""}`);
+      setStatus(`接続しました:${m.unet}${m.upscale ? ` / 拡大:${m.upscale}` : ""}${m.editLora ? " / シートの画像の参照:可" : " / シートの画像の参照:不可(説明文だけで描きます)"}`);
     } catch (e) {
       setModels(null);
       const text = e instanceof Error ? e.message : String(e);
@@ -423,7 +434,7 @@ export function ArtTab(props: { doc: Doc; settings: Settings; running: boolean; 
           </div>
         )}
         <p className="muted small-text">
-          作り方:キャラクターシートで人物の外見を決め、次に表紙や挿絵で描く人物を選びます。「説明文を作る」で小説用のモデルが説明文を書き、「画像を作る」でComfyUIが生成します。採用した画像はEPUBに入ります。
+          作り方:キャラクターシートで人物の外見を決め、次に表紙や挿絵で描く人物を選びます。シートで採用した画像は参照に使います(1枚につき4人まで)。「説明文を作る」で小説用のモデルが説明文を書き、「画像を作る」でComfyUIが生成します。採用した画像はEPUBに入ります。
         </p>
       </Section>
       {ART_KIND_ORDER.map(sectionOf)}
