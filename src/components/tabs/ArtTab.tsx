@@ -4,9 +4,9 @@ import { writeFile } from "@tauri-apps/plugin-fs";
 import type { ArtImage, ArtItem, ArtKind, ArtSet, CharacterSheet, Doc, Settings } from "../../types";
 import { isAnthology } from "../../types";
 import type { ArtJob } from "../../hooks";
-import { ART_KINDS, ART_KIND_ORDER, DEFAULT_ART_STYLE, artCharacters, artPlaces, artReferences, chosenImage, emptyArt, exportArtImage, fullArtPrompt, newArtItem, toGrayscale } from "../../lib/art";
+import { ART_KINDS, ART_KIND_ORDER, DEFAULT_ART_STYLE, artCharacters, artPlaces, artNegative, artReferences, chosenImage, emptyArt, exportArtImage, fullArtPrompt, newArtItem, toGrayscale } from "../../lib/art";
 import { detectComfy, generateImage, type ComfyModels } from "../../lib/comfy";
-import { generateArtCaption, translateArtText } from "../../lib/pipeline";
+import { generateArtCaption, generateArtLooks, translateArtText } from "../../lib/pipeline";
 import { artCaptionPrompt, artLooksPrompt, artTranslatePrompt } from "../../lib/prompts";
 import { deleteArt, loadArt, saveArt } from "../../lib/storage";
 import { newId, sameName } from "../../lib/text";
@@ -93,8 +93,11 @@ function ArtItemCard(props: {
       if (item.kind === "sheet") {
         const character = characters.find((c) => sameName(c.name, item.characters[0] ?? ""));
         if (!character) throw new Error("この人物は設定資料にありません");
-        const r = await generateArtCaption(settings, artLooksPrompt({ ...base, character }), signal);
-        await patch((x) => setCaption(x, r));
+        const r = await generateArtLooks(settings, artLooksPrompt({ ...base, character }), signal);
+        await patch((x) => {
+          setCaption(x, r);
+          x.notHuman = !r.human || undefined;
+        });
         return;
       }
       const scene = k.place === "scene" ? (place?.scenes[item.scene ?? 0] ?? "") : k.place === "chapter" ? (place?.scenes[0] ?? "") : "";
@@ -215,7 +218,7 @@ function ArtItemCard(props: {
         const prompt = fullArtPrompt(art, target);
         const references = [];
         for (const f of artReferences(art, target)) references.push({ name: `notos_${f}.png`, bytes: await loadArt(docId, f) });
-        const png = await generateImage(settings, m, { prompt, width, height, final: k.final, seed, references }, signal, (t) => stage(prefix + t));
+        const png = await generateImage(settings, m, { prompt, width, height, final: k.final, seed, references, negative: artNegative(current) }, signal, (t) => stage(prefix + t));
         const bytes = k.mono ? await toGrayscale(png) : png;
         const file = newId();
         await saveArt(docId, file, bytes);
@@ -396,6 +399,12 @@ function ArtItemCard(props: {
           <label className="check" title="人物の見た目が揃いやすくなりますが、時間は長くかかります">
             <input type="checkbox" checked={!item.noReference} onChange={(e) => void patch((x) => void (x.noReference = !e.target.checked))} />
             シートの画像を参照する({referable}人)
+          </label>
+        )}
+        {item.kind === "sheet" && (
+          <label className="check" title="人が持った絵や、人の姿にならないようにします">
+            <input type="checkbox" checked={!!item.notHuman} onChange={(e) => void patch((x) => void (x.notHuman = e.target.checked || undefined))} />
+            人ではない(ロボット・動物・物など)
           </label>
         )}
         {item.kind === "cover" && (

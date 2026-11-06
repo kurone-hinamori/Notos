@@ -27,6 +27,7 @@ import {
   bibleUpdateSchema,
   artCaptionSchema,
   artTranslateSchema,
+  artLooksSchema,
   bibleSchema,
   conceptSchema,
   digestSchema,
@@ -441,6 +442,18 @@ export async function generateArtCaption(
   const caption = (r.caption ?? "").trim();
   if (!caption) throw new Error("説明文を作れませんでした");
   return { caption, captionJa: (r.captionJa ?? "").trim(), characters: r.characters ?? [] };
+}
+
+/** キャラクターシートの外見の説明(人かどうかも判定する) */
+export async function generateArtLooks(
+  settings: Settings,
+  messages: ChatMessage[],
+  signal?: AbortSignal,
+): Promise<{ caption: string; captionJa: string; human: boolean }> {
+  const r = await chatJson<{ caption: string; captionJa: string; human: boolean }>(settings, { messages, schema: artLooksSchema, temperature: 0.7, signal });
+  const caption = (r.caption ?? "").trim();
+  if (!caption) throw new Error("説明文を作れませんでした");
+  return { caption, captionJa: (r.captionJa ?? "").trim(), human: r.human !== false };
 }
 
 /** 絵の説明を日本語と英語の間で訳す */

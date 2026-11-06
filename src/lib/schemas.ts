@@ -57,6 +57,8 @@ export const digestSchema = obj({ digest: str });
 // 日本語を先に書かせ、英語はその訳にする(作者が日本語で読んで直せるように)
 export const artCaptionSchema = obj({ captionJa: str, caption: str, characters: arr(str) });
 
+export const artLooksSchema = obj({ captionJa: str, caption: str, human: { type: "boolean" } });
+
 export const artTranslateSchema = obj({ text: str });
 
 /** 本文から抽出した設定資料への追記 */

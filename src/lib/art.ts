@@ -163,6 +163,13 @@ export function artPlaces(doc: Doc): ArtPlace[] {
     .filter((p) => p.scenes.length);
 }
 
+/** 人ではない登場人物(ロボット・動物・物など)のキャラクターシート。人が持った絵にならないようにする */
+const THING_SHEET_FRAME =
+  "Design reference sheet on a plain white background for a non-human character: the same character alone, shown in a front view, a side view, a back view, and a close-up. Keep exactly the same shape in every view and do not add arms, legs or a body that are not described. No people, no hands, nobody is holding it.";
+
+/** 否定のプロンプトに足す語 */
+export const artNegative = (item: ArtItem) => (item.kind === "sheet" && item.notHuman ? "person, human, girl, boy, hands, holding" : undefined);
+
 const sheetOf = (art: ArtSet, name: string) => art.items.find((x) => x.kind === "sheet" && x.characters[0] === name);
 
 /** 参照できるのは4枚まで(公式の説明による) */
@@ -193,12 +200,17 @@ const referenceLead = (n: number) =>
  */
 export function fullArtPrompt(art: ArtSet, item: ArtItem): string {
   const k = ART_KINDS[item.kind];
+  const frame = item.kind === "sheet" && item.notHuman ? THING_SHEET_FRAME : k.frame;
   const referenced = referencedPeople(art, item).map((x) => x.name);
   // 参照する人物を先に並べ、Character の番号と参照する画像の順番をそろえる
   const names = item.kind === "sheet" ? [] : [...referenced, ...item.characters.filter((n) => !referenced.includes(n))];
-  const looks = names.map((name) => sheetOf(art, name)?.prompt.trim()).filter((x): x is string => !!x);
+  // 人ではない登場人物(ロボット・動物など)は、そう明記して人の姿にされないようにする
+  const looks = names
+    .map((name) => sheetOf(art, name))
+    .filter((s): s is ArtItem => !!s?.prompt.trim())
+    .map((s) => (s.notHuman ? `(not a human, draw it as it is) ${s.prompt.trim()}` : s.prompt.trim()));
   const people = looks.map((x, i) => (looks.length > 1 ? `Character ${i + 1}: ${x}` : `Character: ${x}`));
-  return [referenced.length ? referenceLead(referenced.length) : "", art.style.trim(), k.frame, item.prompt.trim(), ...people, item.kind === "sheet" ? "Consistent design across all views, no text." : "No text."]
+  return [referenced.length ? referenceLead(referenced.length) : "", art.style.trim(), frame, item.prompt.trim(), ...people, item.kind === "sheet" ? "Consistent design across all views, no text." : "No text."]
     .filter(Boolean)
     .join("\n");
 }

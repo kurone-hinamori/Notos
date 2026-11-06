@@ -63,6 +63,8 @@ export async function detectComfy(s: Url): Promise<ComfyModels> {
 /** 公式の推奨。短く保つ。作品は書籍として出すので、nsfw は常に入れる */
 const NEGATIVE = "nsfw, worst quality, bad anatomy, watermark, jpeg artifact";
 
+const negativeOf = (r: { negative?: string }) => (r.negative ? `${NEGATIVE}, ${r.negative}` : NEGATIVE);
+
 export interface ImageRequest {
   prompt: string;
   width: number;
@@ -70,6 +72,8 @@ export interface ImageRequest {
   /** 仕上がりの大きさ。生成の大きさと違えば拡大・切り抜きする */
   final?: [number, number];
   seed: number;
+  /** 既定に足す否定のプロンプト */
+  negative?: string;
   /** 参照する画像(models.editLora があるときだけ渡す) */
   references?: { name: string; bytes: Uint8Array }[];
 }
@@ -83,7 +87,7 @@ export function mossWorkflow(m: ComfyModels, r: ImageRequest): Record<string, { 
     clip: { class_type: "CLIPLoader", inputs: { clip_name: m.clip, type: "moss_image", device: "default" } },
     vae: { class_type: "VAELoader", inputs: { vae_name: m.vae } },
     positive: { class_type: "CLIPTextEncode", inputs: { clip: ["clip", 0], text: r.prompt } },
-    negative: { class_type: "CLIPTextEncode", inputs: { clip: ["clip", 0], text: NEGATIVE } },
+    negative: { class_type: "CLIPTextEncode", inputs: { clip: ["clip", 0], text: negativeOf(r) } },
     latent: { class_type: "EmptyFlux2LatentImage", inputs: { width: r.width, height: r.height, batch_size: 1 } },
     sampler: {
       class_type: "KSampler",
@@ -118,7 +122,7 @@ export function mossWorkflow(m: ComfyModels, r: ImageRequest): Record<string, { 
       inputs: { clip: ["clip", 0], prompt: text, edit_format: "Moss-Image-Edit", image_strength: 1, vae: ["vae", 0], ...images },
     });
     g.positive = encode(r.prompt);
-    g.negative = encode(NEGATIVE);
+    g.negative = encode(negativeOf(r));
     Object.assign(g.sampler.inputs, { model: ["slg", 0], steps: 30, cfg: 4, sampler_name: "euler", scheduler: "normal" });
   }
   let image: [string, number] = ["decode", 0];

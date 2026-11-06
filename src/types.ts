@@ -305,6 +305,8 @@ export interface ArtItem {
   scene?: number;
   /** 自由な画像の大きさ */
   size?: [number, number];
+  /** キャラクターシート:人ではない(ロボット・動物・物など) */
+  notHuman?: boolean;
   /** キャラクターシートの画像を参照しない */
   noReference?: boolean;
   /** 表紙:題名と著者名を入れる。未設定は入れる */
