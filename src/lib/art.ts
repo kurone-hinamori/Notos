@@ -245,13 +245,33 @@ export function fullArtPrompt(art: ArtSet, item: ArtItem): string {
   const [width, height] = item.size ?? [k.width, k.height];
   const items = boxes.map((b) => {
     const bbox = pixelBox(b.bbox, width, height);
-    if (b.kind === "text") return { label: "text", caption: b.caption.trim() || "Text", text: b.text ?? "", bbox };
+    if (b.kind === "text") return { label: "text", caption: `${trimDot(b.caption) || "Text"}, ${placeOf(b.bbox)}.`, text: b.text ?? "", bbox };
     const sheet = b.kind === "character" && b.name ? sheetOf(art, b.name) : undefined;
     const look = sheet?.prompt.trim() ? `${label(b.name!)}: ${lookOf(sheet)}` : "";
     // ロボットや動物は object にする(character では人の姿にされやすい)
-    return { label: b.kind === "character" && !sheet?.notHuman ? "character" : "object", caption: [b.caption.trim(), look].filter(Boolean).join(" "), bbox };
+    return { label: b.kind === "character" && !sheet?.notHuman ? "character" : "object", caption: [b.caption.trim() ? `${trimDot(b.caption)}, ${placeOf(b.bbox)}.` : `${upper(placeOf(b.bbox))}.`, look].join(" ").trim(), bbox };
   });
   return JSON.stringify({ summary: { caption: summary }, items, bbox_coord_space: "abs_centralized", bbox_format: "yxyx" });
+}
+
+const trimDot = (t: string) => t.trim().replace(/[.。]+$/, "");
+const upper = (t: string) => t.charAt(0).toUpperCase() + t.slice(1);
+
+/**
+ * 枠の位置を言葉にする。小さい枠は位置だけでは守られず、
+ * 右下に置いた著者名が題名の横に描かれたが、説明に「右下」と書くと守られた
+ */
+export function placeOf([y0, x0, y1, x1]: ArtBox["bbox"]): string {
+  const third = (a: number, b: number, words: [string, string, string]) => {
+    const c = (a + b) / 2;
+    return c < 333 ? words[0] : c > 667 ? words[2] : words[1];
+  };
+  const v = third(y0, y1, ["top", "middle", "bottom"]);
+  const h = third(x0, x1, ["left", "center", "right"]);
+  if (v === "middle" && h === "center") return "placed in the center of the image";
+  if (v === "middle") return `placed on the ${h} side of the image`;
+  if (h === "center") return `placed at the ${v} center of the image`;
+  return `placed at the ${v} ${h} corner of the image`;
 }
 
 /** 中身のある枠だけ使う */
