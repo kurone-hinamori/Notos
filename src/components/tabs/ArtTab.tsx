@@ -181,8 +181,21 @@ function ArtItemCard(props: {
   const [boxTranslating, setBoxTranslating] = useState("");
   const boxTranslation = useRef<AbortController | null>(null);
   const staleBoxes = (item.layout ?? []).filter(staleBox);
+  const boxEnglish = (b: ArtBox, signal: AbortSignal) =>
+    translateArtText(
+      settings,
+      artTranslatePrompt({
+        text: b.captionJa,
+        to: "en",
+        sheet: false,
+        characters: castOf(),
+        previous: b.captionFrom?.trim() && b.caption.trim() ? { ja: b.captionFrom, en: b.caption } : undefined,
+        box: { kind: b.kind, name: b.name, text: b.text },
+      }),
+      signal,
+    );
   const translateBox = async (b: ArtBox, signal: AbortSignal) => {
-    const en = await translateArtText(settings, artTranslatePrompt({ text: b.captionJa, to: "en", sheet: false, characters: castOf(), previous: b.captionFrom?.trim() && b.caption.trim() ? { ja: b.captionFrom, en: b.caption } : undefined }), signal);
+    const en = await boxEnglish(b, signal);
     if (signal.aborted) return;
     await patch((x) => {
       const y = x.layout?.find((z) => z.id === b.id);
@@ -251,7 +264,7 @@ function ArtItemCard(props: {
         for (const b of current.layout ?? []) {
           if (!staleBox(b)) layout.push(b);
           else {
-            const en = await translateArtText(settings, artTranslatePrompt({ text: b.captionJa, to: "en", sheet: false, characters: castOf(), previous: b.captionFrom?.trim() && b.caption.trim() ? { ja: b.captionFrom, en: b.caption } : undefined }), signal);
+            const en = await boxEnglish(b, signal);
             layout.push({ ...b, caption: en, captionFrom: b.captionJa });
           }
         }

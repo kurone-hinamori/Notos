@@ -505,9 +505,13 @@ export function artTranslatePrompt(opts: {
   characters: CharacterSheet[];
   /** 直す前の日本語と、その英語(変わっていない部分の英語を変えないため) */
   previous?: { ja: string; en: string };
+  /** 絵の中の枠の説明を訳すとき、その枠(文字の枠なら描く文字、人物の枠なら誰か) */
+  box?: { kind: "character" | "object" | "text"; name?: string; text?: string };
 }): ChatMessage[] {
   // 外見を見せると訳に書き足してしまうので、呼び方を決めるための役割と年齢だけにする
-  const cast = opts.characters.map((c) => `- ${c.name}:${c.role} ${c.age}`.slice(0, 80)).join("\n");
+  // 文字の枠では、描く文字の中の名前を人物と取り違えて書き足すので、人物を見せない
+  const textBox = opts.box?.kind === "text";
+  const cast = textBox ? "" : opts.characters.map((c) => `- ${c.name}:${c.role} ${c.age}`.slice(0, 80)).join("\n");
   if (opts.to === "ja")
     return [
       { role: "system", content: "あなたは翻訳者です。画像生成に使う英語の絵の説明を、作者が読むための日本語にします。" },
@@ -522,6 +526,14 @@ ${opts.text}
 - text に日本語で書く。内容を足したり省いたりしない。`,
       },
     ];
+  const lines = (opts.box?.text ?? "").split("\n").map((s) => s.trim()).filter(Boolean);
+  const about = !opts.box
+    ? ""
+    : textBox
+      ? `\n【この説明について】\n絵の中に文字を描く枠の、文字の見た目の指定です。この枠に描く文字は次のとおりです。\n${lines.map((s) => `「${s}」`).join("\n") || "(まだない)"}\n説明の中にこの文字(またはその一部)が出てきたら、それは人物や会社ではなく「描く文字」のことです。英語では the text "あんころもち" のように、日本語のまま引用符で囲んで書きます。`
+      : opts.box.name
+        ? `\n【この説明について】\n絵の中で「${opts.box.name}」を描く枠の、ポーズや動作の指定です。主語が書いていなければ、この人物のことです。`
+        : `\n【この説明について】\n絵の中の一つの枠に描くものの指定です。`;
   return [
     { role: "system", content: "あなたは翻訳者です。作者が日本語で書いた絵の説明を、画像生成モデルに渡す英語にします。" },
     {
@@ -529,13 +541,15 @@ ${opts.text}
       content: `次の日本語の絵の説明を英語に訳してください。
 
 【日本語】
-${opts.text}${opts.previous ? `\n【直す前の日本語】\n${opts.previous.ja}\n【直す前の英語】\n${opts.previous.en}` : ""}
-【人物】
-${cast || "(なし)"}
-
+${opts.text}${opts.previous ? `\n【直す前の日本語】\n${opts.previous.ja}\n【直す前の英語】\n${opts.previous.en}` : ""}${about}
+${textBox ? "" : `【人物】\n${cast || "(なし)"}\n`}
 【守ること】
-- text に英語の1段落で書く。日本語に書いてあることはすべて訳し、勝手に足したり省いたりしない。色・数・位置などの細かい指定もそのまま訳す。${opts.previous ? "\n- 作者が直したのは【直す前の日本語】との違いの部分だけ。変わっていない部分は【直す前の英語】の言い回しをそのまま使い、違う部分だけを訳して直す。消された部分は英語からも消す。" : ""}
-- 人物の名前は英語に書かない。${opts.sheet ? '"the woman"、"he"、人ではないなら "it" のように呼ぶ。' : '【人物】を参考に "the young woman"、"the older man" のように短く呼ぶ。日本語に書いていない髪・目・服装・持ち物は書き足さない(人物の外見は別に足す)。'}
+- text に英語の1段落で書く。日本語に書いてあることはすべて訳し、勝手に足したり省いたりしない。色・数・位置などの細かい指定もそのまま訳す。訳は日本語と同じくらいの長さにする。
+- 「」で囲んだ文字は絵に描く文字なので訳さず、日本語のまま "…" で囲んで書く。改行はそのまま、記号は「¥」(円記号)などの見たとおりの文字で書く。${opts.previous ? "\n- 作者が直したのは【直す前の日本語】との違いの部分だけ。変わっていない部分は【直す前の英語】の言い回しをそのまま使い、違う部分だけを訳して直す。消された部分は英語からも消す。" : ""}${
+        textBox
+          ? ""
+          : `\n- 人物の名前は英語に書かない。${opts.sheet ? '"the woman"、"he"、人ではないなら "it" のように呼ぶ。' : '【人物】を参考に "the young woman"、"the older man" のように短く呼ぶ。日本語に書いていない髪・目・服装・持ち物は書き足さない(人物の外見は別に足す)。'}\n- 【人物】は呼び方を決めるためだけのもの。年齢・役割・関係は訳に書かない。日本語に出てこない人物を訳に足さない。`
+      }
 - ${ART_SAFE_RULE}`,
     },
   ];
