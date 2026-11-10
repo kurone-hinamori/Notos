@@ -208,8 +208,8 @@ details > summary { cursor: pointer; padding: 4px 0; }
 .art-box-handle { position: absolute; right: 0; bottom: 0; width: 12px; height: 12px; background: #fff; border: 1px solid #333; cursor: nwse-resize; }
 .art-box-detail { border: 1px solid var(--line); border-radius: 6px; padding: 8px; }
 .art-gallery { display: flex; flex-wrap: wrap; gap: 8px; }
-.art-thumb { padding: 0; width: 120px; height: 160px; background: var(--line); border: 2px solid transparent; border-radius: 6px; overflow: hidden; display: grid; place-items: center; }
-.art-thumb img { width: 100%; height: 100%; object-fit: contain; display: block; }
+.art-thumb { position: relative; padding: 0; width: 120px; height: 160px; background: var(--line); border: 2px solid transparent; border-radius: 6px; overflow: hidden; display: grid; place-items: center; }
+.art-thumb img { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: contain; display: block; }
 .art-thumb.selected { border-color: var(--accent); }
 .art-zoom { position: fixed; inset: 0; z-index: 50; background: rgba(0, 0, 0, 0.7); display: grid; place-items: center; padding: 24px; }
 .art-zoom-body { background: var(--panel); border-radius: 8px; padding: 12px; display: flex; flex-direction: column; gap: 8px; max-width: 90vw; max-height: 92vh; }
