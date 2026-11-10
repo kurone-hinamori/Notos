@@ -44,7 +44,7 @@ export const ART_KINDS: Record<ArtKind, ArtKindInfo> = {
     desc: "Kindle の表紙です(1600×2560)。題名と著者名は画像の上に文字として入れます。",
     ...PAGE,
     final: [1600, 2560],
-    frame: "Book cover illustration with one strong focal point and rich color, leaving calm open space in the upper part of the frame.",
+    frame: "Book cover illustration with one clear focal point, leaving calm open space in the upper part of the frame.",
     many: false,
     inBook: true,
     people: true,
@@ -194,6 +194,12 @@ const referenceLead = (n: number) =>
     ? "The reference image is a character design sheet. Draw this same character with the same face, hair, clothes and colors in a new single illustration. Do not copy the layout of the sheet."
     : `The reference images are character design sheets, one for each of Character 1 to Character ${n}, in the same order. Draw these same characters with the same faces, hair, clothes and colors in a new single illustration. Do not copy the layout of the sheets.`;
 
+/** 参照するシートの絵柄に合わせる(表紙などが厚塗り・太い線のゲーム風になりやすかった) */
+const referenceStyle = (mono: boolean) =>
+  mono
+    ? "Match the line art of the reference sheets: the same thin clean lines and the same way of drawing faces and eyes."
+    : "Match the art style of the reference sheets exactly: the same thin clean line art, the same flat anime cel shading and the same natural coloring.";
+
 /**
  * プロンプトの全文。画風、種類ごとの説明、説明文、人物の外見の順に並べる。
  * 参照するときも説明文を併用する(画像だけでは髪の長さなどが崩れた)。
@@ -210,7 +216,7 @@ export function fullArtPrompt(art: ArtSet, item: ArtItem): string {
     .filter((s): s is ArtItem => !!s?.prompt.trim())
     .map((s) => (s.notHuman ? `(not a human, draw it as it is) ${s.prompt.trim()}` : s.prompt.trim()));
   const people = looks.map((x, i) => (looks.length > 1 ? `Character ${i + 1}: ${x}` : `Character: ${x}`));
-  return [referenced.length ? referenceLead(referenced.length) : "", art.style.trim(), frame, item.prompt.trim(), ...people, item.kind === "sheet" ? "Consistent design across all views, no text." : "No text."]
+  return [referenced.length ? referenceLead(referenced.length) : "", art.style.trim(), frame, item.prompt.trim(), ...people, referenced.length ? referenceStyle(!!k.mono) : "", item.kind === "sheet" ? "Consistent design across all views, no text." : "No text."]
     .filter(Boolean)
     .join("\n");
 }

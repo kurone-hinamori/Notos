@@ -319,6 +319,8 @@ export interface ArtItem {
 export interface ArtSet {
   /** 全画像に共通する画風(英語) */
   style: string;
+  /** 描いてほしくないもの(英語。未設定は既定) */
+  negative?: string;
   items: ArtItem[];
 }
 

@@ -61,9 +61,13 @@ export async function detectComfy(s: Url): Promise<ComfyModels> {
 }
 
 /** 公式の推奨。短く保つ。作品は書籍として出すので、nsfw は常に入れる */
-const NEGATIVE = "nsfw, worst quality, bad anatomy, watermark, jpeg artifact";
+export const DEFAULT_NEGATIVE = "nsfw, worst quality, bad anatomy, watermark, jpeg artifact";
+const NEGATIVE = DEFAULT_NEGATIVE;
 
-const negativeOf = (r: { negative?: string }) => (r.negative ? `${NEGATIVE}, ${r.negative}` : NEGATIVE);
+const negativeOf = (r: { negative?: string; baseNegative?: string }) => {
+  const base = r.baseNegative?.trim() ? (/nsfw/i.test(r.baseNegative) ? r.baseNegative.trim() : `nsfw, ${r.baseNegative.trim()}`) : NEGATIVE;
+  return r.negative ? `${base}, ${r.negative}` : base;
+};
 
 export interface ImageRequest {
   prompt: string;
@@ -74,6 +78,8 @@ export interface ImageRequest {
   seed: number;
   /** 既定に足す否定のプロンプト */
   negative?: string;
+  /** 既定の代わりに使う否定のプロンプト(nsfw は必ず入れる) */
+  baseNegative?: string;
   /** 参照する画像(models.editLora があるときだけ渡す) */
   references?: { name: string; bytes: Uint8Array }[];
 }

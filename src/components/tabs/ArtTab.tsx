@@ -5,7 +5,7 @@ import type { ArtImage, ArtItem, ArtKind, ArtSet, CharacterSheet, Doc, Settings 
 import { isAnthology } from "../../types";
 import type { ArtJob } from "../../hooks";
 import { ART_KINDS, ART_KIND_ORDER, DEFAULT_ART_STYLE, artCharacters, artPlaces, artNegative, artReferences, chosenImage, emptyArt, exportArtImage, fullArtPrompt, newArtItem, toGrayscale } from "../../lib/art";
-import { detectComfy, generateImage, type ComfyModels } from "../../lib/comfy";
+import { DEFAULT_NEGATIVE, detectComfy, generateImage, type ComfyModels } from "../../lib/comfy";
 import { generateArtCaption, generateArtLooks, translateArtText } from "../../lib/pipeline";
 import { artCaptionPrompt, artLooksPrompt, artTranslatePrompt } from "../../lib/prompts";
 import { deleteArt, loadArt, saveArt } from "../../lib/storage";
@@ -218,7 +218,7 @@ function ArtItemCard(props: {
         const prompt = fullArtPrompt(art, target);
         const references = [];
         for (const f of artReferences(art, target)) references.push({ name: `notos_${f}.png`, bytes: await loadArt(docId, f) });
-        const png = await generateImage(settings, m, { prompt, width, height, final: k.final, seed, references, negative: artNegative(current) }, signal, (t) => stage(prefix + t));
+        const png = await generateImage(settings, m, { prompt, width, height, final: k.final, seed, references, negative: artNegative(current), baseNegative: art.negative }, signal, (t) => stage(prefix + t));
         const bytes = k.mono ? await toGrayscale(png) : png;
         const file = newId();
         await saveArt(docId, file, bytes);
@@ -573,6 +573,33 @@ export function ArtTab(props: { doc: Doc; settings: Settings; running: boolean; 
               }
             >
               既定の画風に戻す
+            </button>
+          </div>
+        )}
+        <label className="field">
+          <span>描いてほしくないもの(ネガティブプロンプト。英語、カンマ区切り。すべての画像に使います。nsfw は消しても必ず入れます)</span>
+          <textarea
+            rows={2}
+            value={art.negative ?? DEFAULT_NEGATIVE}
+            onChange={(e) =>
+              void control.update(doc.id, (d) => {
+                d.art ??= emptyArt();
+                d.art.negative = e.target.value === DEFAULT_NEGATIVE ? undefined : e.target.value;
+              })
+            }
+          />
+        </label>
+        {art.negative !== undefined && (
+          <div className="row">
+            <button
+              className="small"
+              onClick={() =>
+                void control.update(doc.id, (d) => {
+                  if (d.art) d.art.negative = undefined;
+                })
+              }
+            >
+              既定のネガティブプロンプトに戻す
             </button>
           </div>
         )}
