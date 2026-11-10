@@ -86,6 +86,11 @@ export interface ImageRequest {
 
 const SAVE_NODE = "save";
 
+/** 1枚の処理がこれより長ければ、止まったとみなす(4人を参照して拡大まで含めても10分ほどだった) */
+const STALL_MS = 25 * 60_000;
+/** ComfyUI に送られてからこれより長く処理中なら、止まったとみなす */
+const STALL_QUEUED_MS = 60 * 60_000;
+
 /** ComfyUI の API 形式のワークフロー(公式テンプレートの MOSS-Image: Text to Image と同じ設定) */
 export function mossWorkflow(m: ComfyModels, r: ImageRequest): Record<string, { class_type: string; inputs: Record<string, unknown> }> {
   const g: Record<string, { class_type: string; inputs: Record<string, unknown> }> = {
@@ -183,6 +188,10 @@ export async function generateImage(
   if (!res.ok || !sent.prompt_id) throw new Error(`ComfyUI が受け付けませんでした:${sent.error?.message ?? res.status}`);
   const id = sent.prompt_id;
   const started = Date.now();
+  // ComfyUI で処理中の作業と、それを最初に見た時刻(止まった作業の後ろに並ぶと、自分の番が来ないため)
+  let runningId = "";
+  let deadline = 0;
+  let checked = 0;
 
   for (;;) {
     if (signal.aborted) {
@@ -191,7 +200,9 @@ export async function generateImage(
       if (q.queue_running.some((x) => x[1] === id)) await post(s, "/interrupt", {}).catch(() => undefined);
       throw new DOMException("中断しました", "AbortError");
     }
-    const history = await getJson<Record<string, HistoryEntry>>(s, `/history/${id}`);
+    const history = await getJson<Record<string, HistoryEntry>>(s, `/history/${id}`).catch((e: unknown) => {
+      throw new Error(`生成の途中で ComfyUI との接続が切れました。ComfyUI が終了していないか確認してください(${e instanceof Error ? e.message : String(e)})`);
+    });
     const h = history[id];
     if (h) {
       if (h.status?.status_str !== "success") {
@@ -204,6 +215,26 @@ export async function generateImage(
       const file = await fetch(`${base(s)}/view?${q}`, { headers: headers(s) });
       if (!file.ok) throw new Error(`画像を受け取れませんでした(${file.status})`);
       return new Uint8Array(await file.arrayBuffer());
+    }
+    // GPU のエラーで ComfyUI の処理が止まると、処理中のまま終わらない。長すぎたら知らせる
+    if (Date.now() - checked > 10_000) {
+      checked = Date.now();
+      const q = await getJson<{ queue_running: unknown[][] }>(s, "/queue").catch(() => null);
+      const running = q?.queue_running[0];
+      const rid = typeof running?.[1] === "string" ? running[1] : "";
+      if (rid !== runningId) {
+        runningId = rid;
+        // 見てから25分。送られた時刻が分かれば、そこから60分でも止まったとみなす
+        // (アプリを開く前から止まっていた作業もすぐ分かるように。順番待ちの時間も含むので長めにする)
+        const created = (running?.[3] as { create_time?: number } | undefined)?.create_time;
+        deadline = rid ? Math.min(Date.now() + STALL_MS, typeof created === "number" ? created + STALL_QUEUED_MS : Infinity) : 0;
+      }
+    }
+    if (deadline && Date.now() > deadline) {
+      await post(s, "/queue", { delete: [id] }).catch(() => undefined);
+      throw new Error(
+        `ComfyUI の処理が長い時間進んでいません。ComfyUI のコンソールに「unspecified launch failure」などのエラーが出ていれば、ComfyUI を起動し直してから作り直してください。`,
+      );
     }
     onStatus(`画像を生成中(${Math.round((Date.now() - started) / 1000)}秒)`);
     await sleep(1500, signal);

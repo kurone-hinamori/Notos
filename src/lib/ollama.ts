@@ -37,6 +37,28 @@ export async function listModels(s: Pick<Settings, "ollamaUrl">): Promise<string
   return (data.models ?? []).map((m) => m.name);
 }
 
+/**
+ * 読み込んでいるモデルを GPU から外す(外し終わるまで最大15秒待つ)。
+ * ComfyUI と同じ GPU に小説用のモデルが載ったまま画像を作ると、ComfyUI が GPU のエラーで止まることがあったため。
+ */
+export async function unloadModel(s: Pick<Settings, "ollamaUrl" | "model">): Promise<void> {
+  if (!s.model) return;
+  const headers = { "Content-Type": "application/json", ...originHeader(s) };
+  try {
+    const ps = await fetch(`${base(s)}/api/ps`, { headers: originHeader(s) });
+    const loaded = ((await ps.json()) as { models?: { name: string }[] }).models ?? [];
+    if (!loaded.length) return;
+    for (const m of loaded) await fetch(`${base(s)}/api/generate`, { method: "POST", headers, body: JSON.stringify({ model: m.name, keep_alive: 0 }) });
+    for (let i = 0; i < 30; i++) {
+      const r = await fetch(`${base(s)}/api/ps`, { headers: originHeader(s) });
+      if (!((await r.json()) as { models?: unknown[] }).models?.length) return;
+      await new Promise((ok) => setTimeout(ok, 500));
+    }
+  } catch {
+    // Ollama が動いていなければ、外すものもない
+  }
+}
+
 function stripThinking(text: string): string {
   return text.replace(/<think>[\s\S]*?<\/think>/g, "").replace(/^[\s\S]*<\/think>/, "");
 }

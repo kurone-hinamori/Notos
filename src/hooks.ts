@@ -147,6 +147,11 @@ export function useStoryManager(settings: Settings) {
     async (jobs: Job[]) => {
       if (!ref.current || abort.current || !jobs.length) return;
       const docId = ref.current.id;
+      // 画像の作業中に小説用のモデルを GPU に載せると、ComfyUI が止まることがある
+      if (artAbort.current) {
+        setRun({ ...IDLE, docId, error: "画像の作業中は本文を生成できません。画像の作業が終わってから(または止めてから)実行してください。" });
+        return;
+      }
       const controller = new AbortController();
       abort.current = controller;
       setRun({ ...IDLE, docId, storyId: select(jobs[0].episode).get().id, running: true, stage: "準備中" });

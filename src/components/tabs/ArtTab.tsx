@@ -6,6 +6,7 @@ import { isAnthology } from "../../types";
 import type { ArtJob } from "../../hooks";
 import { ART_KINDS, ART_KIND_ORDER, DEFAULT_ART_STYLE, artCharacters, artPlaces, artNegative, artReferences, chosenImage, emptyArt, exportArtImage, fullArtPrompt, newArtItem, toGrayscale } from "../../lib/art";
 import { DEFAULT_NEGATIVE, detectComfy, generateImage, type ComfyModels } from "../../lib/comfy";
+import { unloadModel } from "../../lib/ollama";
 import { generateArtCaption, generateArtLooks, translateArtText } from "../../lib/pipeline";
 import { artCaptionPrompt, artLooksPrompt, artTranslatePrompt } from "../../lib/prompts";
 import { deleteArt, loadArt, saveArt } from "../../lib/storage";
@@ -167,7 +168,8 @@ function ArtItemCard(props: {
   };
 
   // 日本語を直したら、手が止まって少し経ってから英語に訳し直す
-  const working = mine && busy;
+  // 画像の作業中(ほかの項目も含む)は訳さない。小説用のモデルが GPU に載ると ComfyUI が止まることがあるため
+  const working = busy;
   useEffect(() => {
     if (!stale || working) return;
     const timer = setTimeout(() => void translateHere("en"), 1500);
@@ -208,6 +210,9 @@ function ArtItemCard(props: {
           x.promptEdited = false;
         });
       }
+      // 小説用のモデルを GPU から外してから描く(載ったままだと ComfyUI が GPU のエラーで止まることがあった)
+      stage("小説用のモデルをGPUから外しています");
+      await unloadModel(settings);
       const m = models ?? (await detectComfy(settings));
       for (let n = 0; n < count; n++) {
         const prefix = count > 1 ? `${n + 1}/${count}枚目:` : "";
@@ -364,7 +369,7 @@ function ArtItemCard(props: {
         ) : translating === "ja" ? (
           <span className="running small-text">● 日本語に訳しています</span>
         ) : stale ? (
-          <span className="muted small-text">日本語を直しました。少し経つと英語に訳し直します</span>
+          <span className="muted small-text">{working ? "日本語を直しました。画像の作業が終わってから英語に訳し直します" : "日本語を直しました。少し経つと英語に訳し直します"}</span>
         ) : item.promptEdited ? (
           <span className="muted small-text">英語を直接直しました(日本語には反映されていません)</span>
         ) : null}
@@ -385,7 +390,12 @@ function ArtItemCard(props: {
         <button className="small" disabled={busy || props.running} onClick={writeCaption}>
           説明文を作る
         </button>
-        <button className="small primary" disabled={busy || !models || !(item.prompt.trim() || item.promptJa?.trim())} onClick={generate}>
+        <button
+          className="small primary"
+          disabled={busy || props.running || !models || !(item.prompt.trim() || item.promptJa?.trim())}
+          title={props.running ? "本文の生成中は画像を作れません(同じGPUを使うため)" : undefined}
+          onClick={generate}
+        >
           画像を作る
         </button>
         <select style={{ width: "auto" }} value={count} onChange={(e) => setCount(Number(e.target.value))}>
