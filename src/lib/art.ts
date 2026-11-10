@@ -1,4 +1,4 @@
-import type { ArtImage, ArtItem, ArtKind, ArtSet, CharacterSheet, Doc } from "../types";
+import type { ArtBox, ArtImage, ArtItem, ArtKind, ArtSet, CharacterSheet, Doc } from "../types";
 import { isAnthology } from "../types";
 import { loadArt } from "./storage";
 import { newId, sameName, splitScenes } from "./text";
@@ -41,7 +41,7 @@ export const ART_KINDS: Record<ArtKind, ArtKindInfo> = {
   },
   cover: {
     label: "表紙",
-    desc: "Kindle の表紙です(1600×2560)。題名と著者名は画像の上に文字として入れます。",
+    desc: "Kindle の表紙です(1600×2560)。題名と著者名は、文字の枠を置いて絵の中に描くか、枠がなければ保存のときに画像の上に重ねます。",
     ...PAGE,
     final: [1600, 2560],
     frame: "Book cover illustration with one clear focal point, leaving calm open space in the upper part of the frame.",
@@ -175,10 +175,20 @@ const sheetOf = (art: ArtSet, name: string) => art.items.find((x) => x.kind === 
 /** 参照できるのは4枚まで(公式の説明による) */
 const MAX_REFERENCES = 4;
 
+/** シートの画像を参照するか。表紙は参照しないのが既定(参照すると明るく白っぽい絵柄になり、ディスプレイに顔が映り込むことがあった) */
+export const usesReference = (item: ArtItem) => item.kind !== "sheet" && !(item.noReference ?? item.kind === "cover");
+
+/** 描く人物。選んだ人物に、枠に置いた人物を足す */
+export const drawnCharacters = (item: ArtItem) => {
+  const out = [...item.characters];
+  for (const b of item.layout ?? []) if (b.kind === "character" && b.name && !out.includes(b.name)) out.push(b.name);
+  return out;
+};
+
 /** 参照する人物と、そのキャラクターシートの画像(file)。描く人物の順に並ぶ */
 function referencedPeople(art: ArtSet, item: ArtItem): { name: string; file: string }[] {
-  if (item.kind === "sheet" || item.noReference) return [];
-  return item.characters
+  if (!usesReference(item)) return [];
+  return drawnCharacters(item)
     .flatMap((name) => {
       const sheet = sheetOf(art, name);
       const file = sheet?.prompt.trim() ? chosenImage(sheet)?.file : undefined;
@@ -200,25 +210,101 @@ const referenceStyle = (mono: boolean) =>
     ? "Match the line art of the reference sheets: the same thin clean lines and the same way of drawing faces and eyes."
     : "Match the art style of the reference sheets exactly: the same thin clean line art, the same flat anime cel shading and the same natural coloring.";
 
+const lookOf = (sheet: ArtItem) => (sheet.notHuman ? `(not a human, draw it as it is) ${sheet.prompt.trim()}` : sheet.prompt.trim());
+
 /**
  * プロンプトの全文。画風、種類ごとの説明、説明文、人物の外見の順に並べる。
  * 参照するときも説明文を併用する(画像だけでは髪の長さなどが崩れた)。
+ * 枠があれば MOSS-Image の JSON レイアウトにし、枠に置いた人物の外見はその枠の説明に入れる。
  */
 export function fullArtPrompt(art: ArtSet, item: ArtItem): string {
   const k = ART_KINDS[item.kind];
   const frame = item.kind === "sheet" && item.notHuman ? THING_SHEET_FRAME : k.frame;
   const referenced = referencedPeople(art, item).map((x) => x.name);
+  const boxes = item.kind === "sheet" ? [] : (item.layout ?? []).filter(validBox);
+  const boxed = new Set(boxes.flatMap((b) => (b.kind === "character" && b.name ? [b.name] : [])));
   // 参照する人物を先に並べ、Character の番号と参照する画像の順番をそろえる
-  const names = item.kind === "sheet" ? [] : [...referenced, ...item.characters.filter((n) => !referenced.includes(n))];
+  const names = item.kind === "sheet" ? [] : [...referenced, ...drawnCharacters(item).filter((n) => !referenced.includes(n))];
+  const numbered = names.filter((n) => sheetOf(art, n)?.prompt.trim());
+  const label = (name: string) => (numbered.length > 1 ? `Character ${numbered.indexOf(name) + 1}` : "Character");
   // 人ではない登場人物(ロボット・動物など)は、そう明記して人の姿にされないようにする
-  const looks = names
-    .map((name) => sheetOf(art, name))
-    .filter((s): s is ArtItem => !!s?.prompt.trim())
-    .map((s) => (s.notHuman ? `(not a human, draw it as it is) ${s.prompt.trim()}` : s.prompt.trim()));
-  const people = looks.map((x, i) => (looks.length > 1 ? `Character ${i + 1}: ${x}` : `Character: ${x}`));
-  return [referenced.length ? referenceLead(referenced.length) : "", art.style.trim(), frame, item.prompt.trim(), ...people, referenced.length ? referenceStyle(!!k.mono) : "", item.kind === "sheet" ? "Consistent design across all views, no text." : "No text."]
+  const people = numbered.filter((n) => !boxed.has(n)).map((n) => `${label(n)}: ${lookOf(sheetOf(art, n)!)}`);
+  const hasText = boxes.some((b) => b.kind === "text");
+  const summary = [
+    referenced.length ? referenceLead(referenced.length) : "",
+    art.style.trim(),
+    frame,
+    item.prompt.trim(),
+    ...people,
+    referenced.length ? referenceStyle(!!k.mono) : "",
+    item.kind === "sheet" ? "Consistent design across all views, no text." : hasText ? "No other text than the text boxes." : "No text.",
+  ]
     .filter(Boolean)
     .join("\n");
+  if (!boxes.length) return summary;
+  const [width, height] = item.size ?? [k.width, k.height];
+  const items = boxes.map((b) => {
+    const bbox = pixelBox(b.bbox, width, height);
+    if (b.kind === "text") return { label: "text", caption: b.caption.trim() || "Text", text: b.text ?? "", bbox };
+    const sheet = b.kind === "character" && b.name ? sheetOf(art, b.name) : undefined;
+    const look = sheet?.prompt.trim() ? `${label(b.name!)}: ${lookOf(sheet)}` : "";
+    // ロボットや動物は object にする(character では人の姿にされやすい)
+    return { label: b.kind === "character" && !sheet?.notHuman ? "character" : "object", caption: [b.caption.trim(), look].filter(Boolean).join(" "), bbox };
+  });
+  return JSON.stringify({ summary: { caption: summary }, items, bbox_coord_space: "abs_centralized", bbox_format: "yxyx" });
+}
+
+/** 中身のある枠だけ使う */
+const validBox = (b: ArtBox) => (b.kind === "text" ? !!b.text?.trim() : !!(b.caption.trim() || b.name));
+
+/** 0〜1000 の [上, 左, 下, 右] を、画像の中心を原点にした画素に直す(ComfyUI の MOSS-Image Layout Prompt と同じ) */
+export function pixelBox([y0, x0, y1, x1]: ArtBox["bbox"], width: number, height: number): number[] {
+  const at = (v: number, size: number, round: (n: number) => number) => round(Math.round(((v * size) / 1000) * 1e9) / 1e9) - Math.floor(size / 2);
+  return [at(y0, height, Math.floor), at(x0, width, Math.floor), at(y1, height, Math.ceil), at(x1, width, Math.ceil)];
+}
+
+/** 文字の枠の見た目の既定(日本語と英語) */
+const TEXT_LOOKS: Record<NonNullable<ArtBox["role"]>, [string, string]> = {
+  title: ["大きく太い白の題名ロゴ。黒い縁取り", "Large bold white Japanese title logo with a dark outline"],
+  subtitle: ["題名の下の、少し小さい白い文字", "Smaller white Japanese subtitle text under the title, with a dark outline"],
+  author: ["小さめの白い著者名", "Small white author name text with a thin dark outline, much smaller than the title"],
+  free: ["白い文字。黒い縁取り", "White Japanese text with a dark outline"],
+};
+
+const box = (b: Omit<ArtBox, "id" | "captionFrom">): ArtBox => ({ ...b, id: newId(), captionFrom: b.captionJa });
+
+export const textBox = (role: NonNullable<ArtBox["role"]>, text: string, bbox: ArtBox["bbox"]) =>
+  box({ kind: "text", role, text, captionJa: TEXT_LOOKS[role][0], caption: TEXT_LOOKS[role][1], bbox });
+
+/** 人物の枠(名前がなければ物の枠) */
+export const thingBox = (kind: "character" | "object", name?: string): ArtBox =>
+  box({ kind, name, captionJa: "", caption: "", bbox: kind === "character" ? [330, 250, 990, 750] : [350, 650, 500, 850] });
+
+/** 題名を、題名とサブタイトルに分ける(「、」などの区切りがあり、長いときだけ) */
+export function splitTitle(title: string): [string, string] {
+  const t = title.trim();
+  const m = t.length > 14 ? /^(.{4,}?)[、,，　 ](.+)$/.exec(t) : null;
+  return m ? [m[1], breakLine(m[2])] : [t, ""];
+}
+
+/** 長いサブタイトルは、真ん中に近い助詞の後で2行に分ける(自動の改行は意図どおりにならないことがある) */
+function breakLine(text: string): string {
+  if (text.length <= 14 || text.includes("\n")) return text;
+  const mid = text.length / 2;
+  let best = -1;
+  // 次の文字がひらがなでない所だけで分ける(「して|たら」のように語の途中で切らない)
+  const kana = (c: string) => c >= "ぁ" && c <= "ゖ";
+  for (let i = 3; i < text.length - 3; i++) if ("らてでにをがはのと、".includes(text[i]) && !kana(text[i + 1]) && (best < 0 || Math.abs(i + 1 - mid) < Math.abs(best + 1 - mid))) best = i;
+  return best < 0 ? text : `${text.slice(0, best + 1)}\n${text.slice(best + 1)}`;
+}
+
+/** 表紙の題名・サブタイトル・著者名(右下)の枠 */
+export function coverTextBoxes(title: string, author: string): ArtBox[] {
+  const [main, sub] = splitTitle(title);
+  const out = [textBox("title", main, [30, 60, 150, 940])];
+  if (sub) out.push(textBox("subtitle", sub, [155, 120, 245, 880]));
+  if (author.trim()) out.push(textBox("author", author.trim(), [920, 620, 970, 960]));
+  return out;
 }
 
 export const chosenImage = (item: ArtItem): ArtImage | undefined => item.images.find((x) => x.file === item.chosen) ?? item.images.at(-1);
@@ -316,9 +402,12 @@ export async function toJpeg(png: Uint8Array, text?: { title: string; author: st
   return bytesOf(await canvas.convertToBlob({ type: "image/jpeg", quality: 0.92 }));
 }
 
+/** 表紙の題名と著者名を画像の上に重ねるか(文字の枠で絵の中に描いたなら、既定は重ねない) */
+export const overlaysCoverText = (item: ArtItem) => item.coverText ?? !(item.layout ?? []).some((b) => b.kind === "text" && b.text?.trim());
+
 /** 本やファイルに使う形にした画像(表紙は設定に応じて文字を入れる) */
 export async function exportArtImage(doc: Doc, item: ArtItem | undefined, file: string, author: string): Promise<Uint8Array> {
   const png = await loadArt(doc.id, file);
-  const text = item?.kind === "cover" && item.coverText !== false ? { title: doc.title, author } : undefined;
+  const text = item?.kind === "cover" && overlaysCoverText(item) ? { title: doc.title, author } : undefined;
   return toJpeg(png, text);
 }

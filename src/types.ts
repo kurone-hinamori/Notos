@@ -284,6 +284,27 @@ export interface ArtImage {
   createdAt: string;
 }
 
+/** 絵の中に置く枠の1つ */
+export interface ArtBox {
+  id: string;
+  /** character: 人物(キャラクターシートの人物を選べる)、object: 物、text: 文字 */
+  kind: "character" | "object" | "text";
+  /** 人物の枠:キャラクターシートの人物の名前。外見の説明を枠に入れる */
+  name?: string;
+  /** 文字の枠:題名・サブタイトル・著者名・自由な文字 */
+  role?: "title" | "subtitle" | "author" | "free";
+  /** 文字の枠:描く文字(改行できる) */
+  text?: string;
+  /** 枠の中の説明(日本語。ポーズや文字の見た目など) */
+  captionJa: string;
+  /** 英語(生成に使う) */
+  caption: string;
+  /** いまの英語の訳し元になった日本語 */
+  captionFrom?: string;
+  /** 位置。画像の上端・左端を0、下端・右端を1000にした [上, 左, 下, 右] */
+  bbox: [number, number, number, number];
+}
+
 /** 画像の1項目(候補を何枚か作り、1枚を採用する) */
 export interface ArtItem {
   id: string;
@@ -309,8 +330,10 @@ export interface ArtItem {
   notHuman?: boolean;
   /** キャラクターシートの画像を参照しない */
   noReference?: boolean;
-  /** 表紙:題名と著者名を入れる。未設定は入れる */
+  /** 表紙:保存と EPUB で題名と著者名を画像の上に重ねる。未設定は、文字の枠がなければ重ねる */
   coverText?: boolean;
+  /** 人物・物・文字を置く枠(MOSS-Image の JSON レイアウト)。空なら説明文だけで描く */
+  layout?: ArtBox[];
   images: ArtImage[];
   /** 採用した画像の file */
   chosen?: string;

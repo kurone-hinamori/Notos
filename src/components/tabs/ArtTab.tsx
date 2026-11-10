@@ -1,10 +1,10 @@
 import { useEffect, useRef, useState } from "react";
 import { save } from "@tauri-apps/plugin-dialog";
 import { writeFile } from "@tauri-apps/plugin-fs";
-import type { ArtImage, ArtItem, ArtKind, ArtSet, CharacterSheet, Doc, Settings } from "../../types";
+import type { ArtBox, ArtImage, ArtItem, ArtKind, ArtSet, CharacterSheet, Doc, Settings } from "../../types";
 import { isAnthology } from "../../types";
 import type { ArtJob } from "../../hooks";
-import { ART_KINDS, ART_KIND_ORDER, DEFAULT_ART_STYLE, artCharacters, artPlaces, artNegative, artReferences, chosenImage, emptyArt, exportArtImage, fullArtPrompt, newArtItem, toGrayscale } from "../../lib/art";
+import { ART_KINDS, ART_KIND_ORDER, DEFAULT_ART_STYLE, artCharacters, artPlaces, artNegative, artReferences, chosenImage, coverTextBoxes, emptyArt, exportArtImage, fullArtPrompt, newArtItem, overlaysCoverText, toGrayscale, usesReference } from "../../lib/art";
 import { DEFAULT_NEGATIVE, detectComfy, generateImage, type ComfyModels } from "../../lib/comfy";
 import { unloadModel } from "../../lib/ollama";
 import { generateArtCaption, generateArtLooks, translateArtText } from "../../lib/pipeline";
@@ -12,6 +12,7 @@ import { artCaptionPrompt, artLooksPrompt, artTranslatePrompt } from "../../lib/
 import { deleteArt, loadArt, saveArt } from "../../lib/storage";
 import { newId, sameName } from "../../lib/text";
 import { Section } from "../ui";
+import { ArtLayoutEditor, staleBox } from "./ArtLayout";
 
 export interface ArtControl {
   job: ArtJob | null;
@@ -176,7 +177,40 @@ function ArtItemCard(props: {
     return () => clearTimeout(timer);
   }, [item.promptJa, item.promptFrom, working]);
 
-  useEffect(() => () => translation.current?.abort(), []);
+  // 枠の説明も、日本語を直したら少し経ってから訳し直す(本文の説明の訳し直しを先にする)
+  const [boxTranslating, setBoxTranslating] = useState("");
+  const boxTranslation = useRef<AbortController | null>(null);
+  const staleBoxes = (item.layout ?? []).filter(staleBox);
+  const translateBox = async (b: ArtBox, signal: AbortSignal) => {
+    const en = await translateArtText(settings, artTranslatePrompt({ text: b.captionJa, to: "en", sheet: false, characters: castOf(), previous: b.captionFrom?.trim() && b.caption.trim() ? { ja: b.captionFrom, en: b.caption } : undefined }), signal);
+    if (signal.aborted) return;
+    await patch((x) => {
+      const y = x.layout?.find((z) => z.id === b.id);
+      if (y && y.captionJa === b.captionJa) Object.assign(y, { caption: en, captionFrom: b.captionJa });
+    });
+  };
+  const boxKey = staleBoxes.map((b) => b.id + b.captionJa).join("|");
+  useEffect(() => {
+    const b = staleBoxes[0];
+    if (!b || working || stale || translating) return;
+    const timer = setTimeout(() => {
+      boxTranslation.current?.abort();
+      const ac = new AbortController();
+      boxTranslation.current = ac;
+      setBoxTranslating(b.id);
+      void translateBox(b, ac.signal)
+        .catch(() => undefined)
+        .finally(() => {
+          if (boxTranslation.current === ac) {
+            boxTranslation.current = null;
+            setBoxTranslating("");
+          }
+        });
+    }, 1500);
+    return () => clearTimeout(timer);
+  }, [boxKey, working, stale, translating]);
+
+  useEffect(() => () => (translation.current?.abort(), boxTranslation.current?.abort()), []);
 
   const editJa = (value: string) => {
     translation.current?.abort();
@@ -197,6 +231,7 @@ function ArtItemCard(props: {
   const generate = () =>
     void control.start(docId, item.id, async (signal, stage) => {
       translation.current?.abort();
+      boxTranslation.current?.abort();
       let current = item;
       if (stale) {
         // 訳し直しが済んでいなければ、先に訳してから描く
@@ -209,6 +244,19 @@ function ArtItemCard(props: {
           x.promptFrom = ja;
           x.promptEdited = false;
         });
+      }
+      if (staleBoxes.length) {
+        stage("枠の説明を英語に訳しています");
+        const layout: ArtBox[] = [];
+        for (const b of current.layout ?? []) {
+          if (!staleBox(b)) layout.push(b);
+          else {
+            const en = await translateArtText(settings, artTranslatePrompt({ text: b.captionJa, to: "en", sheet: false, characters: castOf(), previous: b.captionFrom?.trim() && b.caption.trim() ? { ja: b.captionFrom, en: b.caption } : undefined }), signal);
+            layout.push({ ...b, caption: en, captionFrom: b.captionJa });
+          }
+        }
+        current = { ...current, layout };
+        await patch((x) => void (x.layout = layout));
       }
       // 小説用のモデルを GPU から外してから描く(載ったままだと ComfyUI が GPU のエラーで止まることがあった)
       stage("小説用のモデルをGPUから外しています");
@@ -268,6 +316,7 @@ function ArtItemCard(props: {
 
   const chosen = chosenImage(item);
   const referable = artReferences(art, { ...item, noReference: false }).length;
+  const author = doc.author || settings.author;
   const sheetNames = art.items.filter((i) => i.kind === "sheet" && i.prompt.trim()).map((i) => i.characters[0]);
 
   return (
@@ -386,13 +435,36 @@ function ArtItemCard(props: {
       </div>
       {translateError && <p className="error small-text">{translateError}</p>}
 
+      {item.kind !== "sheet" && (
+        <details className="art-layout-details" open={!!item.layout?.length}>
+          <summary className="small-text">枠の配置(人物・物・文字を置く場所){item.layout?.length ? `:${item.layout.length}個` : ""}</summary>
+          <ArtLayoutEditor
+            docId={docId}
+            boxes={item.layout ?? []}
+            width={(item.size ?? [k.width, k.height])[0]}
+            height={(item.size ?? [k.width, k.height])[1]}
+            backdrop={chosen?.file}
+            sheetNames={sheetNames}
+            title={doc.title}
+            author={author}
+            translating={boxTranslating}
+            onChange={(layout) => void patch((x) => void (x.layout = layout.length ? layout : undefined))}
+          />
+          {item.kind === "cover" && !item.layout?.some((b) => b.kind === "text") && (
+            <button className="small" onClick={() => void patch((x) => void (x.layout = [...(x.layout ?? []), ...coverTextBoxes(doc.title, author)]))}>
+              題名・著者名の枠を置く
+            </button>
+          )}
+        </details>
+      )}
+
       <div className="row wrap">
         <button className="small" disabled={busy || props.running} onClick={writeCaption}>
           説明文を作る
         </button>
         <button
           className="small primary"
-          disabled={busy || props.running || !models || !(item.prompt.trim() || item.promptJa?.trim())}
+          disabled={busy || props.running || !models || !(item.prompt.trim() || item.promptJa?.trim() || item.layout?.length)}
           title={props.running ? "本文の生成中は画像を作れません(同じGPUを使うため)" : undefined}
           onClick={generate}
         >
@@ -407,7 +479,7 @@ function ArtItemCard(props: {
         </select>
         {models?.editLora && referable > 0 && (
           <label className="check" title="人物の見た目が揃いやすくなりますが、時間は長くかかります">
-            <input type="checkbox" checked={!item.noReference} onChange={(e) => void patch((x) => void (x.noReference = !e.target.checked))} />
+            <input type="checkbox" checked={usesReference(item)} onChange={(e) => void patch((x) => void (x.noReference = !e.target.checked))} />
             シートの画像を参照する({referable}人)
           </label>
         )}
@@ -419,8 +491,8 @@ function ArtItemCard(props: {
         )}
         {item.kind === "cover" && (
           <label className="check">
-            <input type="checkbox" checked={item.coverText !== false} onChange={(e) => void patch((x) => void (x.coverText = e.target.checked))} />
-            保存とEPUBで題名と著者名を入れる
+            <input type="checkbox" checked={overlaysCoverText(item)} onChange={(e) => void patch((x) => void (x.coverText = e.target.checked))} />
+            保存とEPUBで題名と著者名を画像の上に重ねる
           </label>
         )}
         {mine && busy && (
@@ -527,7 +599,7 @@ export function ArtTab(props: { doc: Doc; settings: Settings; running: boolean; 
         title={k.label}
         actions={
           kind !== "sheet" && (k.many || !items.length) ? (
-            <button className="small" onClick={() => add(newArtItem(kind))}>
+            <button className="small" onClick={() => add(kind === "cover" ? { ...newArtItem(kind), layout: coverTextBoxes(doc.title, doc.author || settings.author) } : newArtItem(kind))}>
               ＋ 追加
             </button>
           ) : undefined
