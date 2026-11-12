@@ -4,11 +4,11 @@ import { writeFile } from "@tauri-apps/plugin-fs";
 import type { ArtBox, ArtImage, ArtItem, ArtKind, ArtSet, CharacterSheet, Doc, Settings } from "../../types";
 import { isAnthology } from "../../types";
 import type { ArtJob } from "../../hooks";
-import { ART_KINDS, ART_KIND_ORDER, DEFAULT_ART_STYLE, artCharacters, artPlaces, artNegative, artReferences, chosenImage, coverTextBoxes, emptyArt, exportArtImage, fullArtPrompt, newArtItem, overlaysCoverText, toGrayscale, usesReference } from "../../lib/art";
+import { ART_KINDS, ART_KIND_ORDER, DEFAULT_ART_STYLE, artCharacters, artPlaces, artNegative, artReferences, needsNegativeEn, staleLooks, staleNegative, chosenImage, coverTextBoxes, emptyArt, exportArtImage, fullArtPrompt, newArtItem, overlaysCoverText, toGrayscale, usesReference } from "../../lib/art";
 import { DEFAULT_NEGATIVE, detectComfy, generateImage, type ComfyModels } from "../../lib/comfy";
 import { unloadModel } from "../../lib/ollama";
 import { generateArtCaption, generateArtLooks, translateArtText } from "../../lib/pipeline";
-import { artCaptionPrompt, artLooksPrompt, artTranslatePrompt } from "../../lib/prompts";
+import { artCaptionPrompt, artLooksPrompt, artLookTrimPrompt, artNegativePrompt, artTranslatePrompt } from "../../lib/prompts";
 import { deleteArt, loadArt, saveArt } from "../../lib/storage";
 import { newId, sameName } from "../../lib/text";
 import { Section } from "../ui";
@@ -271,6 +271,25 @@ function ArtItemCard(props: {
         current = { ...current, layout };
         await patch((x) => void (x.layout = layout));
       }
+      if (staleNegative(current)) {
+        stage("描かないものを英語に訳しています");
+        const ja = current.negative ?? "";
+        const en = await translateArtText(settings, artNegativePrompt(ja), signal);
+        current = { ...current, negativeEn: en, negativeFrom: ja };
+        await patch((x) => {
+          x.negativeEn = en;
+          x.negativeFrom = ja;
+        });
+      }
+      // シートの外見に描かないもの(持ち物など)が書いてあると、そちらが勝つので、この画像では外見から除く
+      const trims = staleLooks(art, current);
+      if (trims.length) {
+        stage("人物の外見から描かないものを除いています");
+        const looks = (current.looks ?? []).filter((l) => !trims.some((t) => t.name === l.name));
+        for (const t of trims) looks.push({ ...t, prompt: await translateArtText(settings, artLookTrimPrompt(t.from, t.negative), signal) });
+        current = { ...current, looks };
+        await patch((x) => void (x.looks = looks));
+      }
       // 小説用のモデルを GPU から外してから描く(載ったままだと ComfyUI が GPU のエラーで止まることがあった)
       stage("小説用のモデルをGPUから外しています");
       await unloadModel(settings);
@@ -447,6 +466,23 @@ function ArtItemCard(props: {
         )}
       </div>
       {translateError && <p className="error small-text">{translateError}</p>}
+
+      {item.kind !== "sheet" && (
+        <label className="field">
+          <span>この画像に描かないもの(ネガティブプロンプト。作品全体の設定に足して使います)</span>
+          <input
+            value={item.negative ?? ""}
+            placeholder="例:バット、長袖"
+            onChange={(e) => void patch((x) => void (x.negative = e.target.value || undefined))}
+          />
+          {needsNegativeEn(item) &&
+            (staleNegative(item) ? (
+              <span className="muted small-text">「画像を作る」のときに英語に訳します</span>
+            ) : (
+              <span className="muted small-text">英語:{item.negativeEn}</span>
+            ))}
+        </label>
+      )}
 
       {item.kind !== "sheet" && (
         <details className="art-layout-details" open={!!item.layout?.length}>

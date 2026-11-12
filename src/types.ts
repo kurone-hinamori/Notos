@@ -332,11 +332,28 @@ export interface ArtItem {
   noReference?: boolean;
   /** 表紙:保存と EPUB で題名と著者名を画像の上に重ねる。未設定は、文字の枠がなければ重ねる */
   coverText?: boolean;
+  /** この画像だけで描いてほしくないもの(作者が書いたまま。日本語なら英語に訳して使う) */
+  negative?: string;
+  /** negative を英語にしたもの */
+  negativeEn?: string;
+  /** negativeEn を訳したときの negative */
+  negativeFrom?: string;
+  /** この画像で使う人物の外見(シートの外見から、描かないものに当たる部分を除いたもの) */
+  looks?: ArtLook[];
   /** 人物・物・文字を置く枠(MOSS-Image の JSON レイアウト)。空なら説明文だけで描く */
   layout?: ArtBox[];
   images: ArtImage[];
   /** 採用した画像の file */
   chosen?: string;
+}
+
+export interface ArtLook {
+  name: string;
+  /** 元にしたシートの外見(英語) */
+  from: string;
+  /** 除いた描かないもの(英語) */
+  negative: string;
+  prompt: string;
 }
 
 export interface ArtSet {

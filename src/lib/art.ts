@@ -168,7 +168,21 @@ const THING_SHEET_FRAME =
   "Design reference sheet on a plain white background for a non-human character: the same character alone, shown in a front view, a side view, a back view, and a close-up. Keep exactly the same shape in every view and do not add arms, legs or a body that are not described. No people, no hands, nobody is holding it.";
 
 /** 否定のプロンプトに足す語 */
-export const artNegative = (item: ArtItem) => (item.kind === "sheet" && item.notHuman ? "person, human, girl, boy, hands, holding" : undefined);
+/** 日本語などで書いてあり、英語に訳す必要がある */
+export const needsNegativeEn = (item: ArtItem) => /[^\x00-\x7f]/.test(item.negative ?? "");
+/** 画像ごとのネガティブプロンプトの訳が、書き直しに追いついていない */
+export const staleNegative = (item: ArtItem) => needsNegativeEn(item) && item.negativeFrom !== item.negative;
+
+/** 画像ごとの描かないもの(英語)。訳が済んでいなければ undefined */
+export const ownNegative = (item: ArtItem) => {
+  const own = needsNegativeEn(item) ? (item.negativeFrom === item.negative ? item.negativeEn : undefined) : item.negative;
+  return own?.trim().replace(/[,、\s]+$/, "") || undefined;
+};
+
+export const artNegative = (item: ArtItem) => {
+  const parts = [item.kind === "sheet" && item.notHuman ? "person, human, girl, boy, hands, holding" : "", ownNegative(item) ?? ""].filter(Boolean);
+  return parts.length ? parts.join(", ") : undefined;
+};
 
 const sheetOf = (art: ArtSet, name: string) => art.items.find((x) => x.kind === "sheet" && x.characters[0] === name);
 
@@ -210,7 +224,26 @@ const referenceStyle = (mono: boolean) =>
     ? "Match the line art of the reference sheets: the same thin clean lines and the same way of drawing faces and eyes."
     : "Match the art style of the reference sheets exactly: the same thin clean line art, the same flat anime cel shading and the same natural coloring.";
 
-const lookOf = (sheet: ArtItem) => (sheet.notHuman ? `(not a human, draw it as it is) ${sheet.prompt.trim()}` : sheet.prompt.trim());
+/** この画像用に、描かないものを除いた外見があればそれを使う */
+const lookCache = (item: ArtItem, name: string, sheet: ArtItem) => {
+  const negative = ownNegative(item);
+  return negative ? item.looks?.find((l) => l.name === name && l.from === sheet.prompt.trim() && l.negative === negative) : undefined;
+};
+
+const lookOf = (sheet: ArtItem, item?: ArtItem) => {
+  const look = (item && lookCache(item, sheet.characters[0], sheet)?.prompt) || sheet.prompt.trim();
+  return sheet.notHuman ? `(not a human, draw it as it is) ${look}` : look;
+};
+
+/** 描かないものを除いた外見を、まだ作っていない人物(名前と元の外見) */
+export function staleLooks(art: ArtSet, item: ArtItem): { name: string; from: string; negative: string }[] {
+  const negative = ownNegative(item);
+  if (!negative || item.kind === "sheet") return [];
+  return drawnCharacters(item).flatMap((name) => {
+    const sheet = sheetOf(art, name);
+    return sheet?.prompt.trim() && !lookCache(item, name, sheet) ? [{ name, from: sheet.prompt.trim(), negative }] : [];
+  });
+}
 
 /**
  * プロンプトの全文。画風、種類ごとの説明、説明文、人物の外見の順に並べる。
@@ -228,7 +261,7 @@ export function fullArtPrompt(art: ArtSet, item: ArtItem): string {
   const numbered = names.filter((n) => sheetOf(art, n)?.prompt.trim());
   const label = (name: string) => (numbered.length > 1 ? `Character ${numbered.indexOf(name) + 1}` : "Character");
   // 人ではない登場人物(ロボット・動物など)は、そう明記して人の姿にされないようにする
-  const people = numbered.filter((n) => !boxed.has(n)).map((n) => `${label(n)}: ${lookOf(sheetOf(art, n)!)}`);
+  const people = numbered.filter((n) => !boxed.has(n)).map((n) => `${label(n)}: ${lookOf(sheetOf(art, n)!, item)}`);
   const hasText = boxes.some((b) => b.kind === "text");
   const summary = [
     referenced.length ? referenceLead(referenced.length) : "",
@@ -247,7 +280,7 @@ export function fullArtPrompt(art: ArtSet, item: ArtItem): string {
     const bbox = pixelBox(b.bbox, width, height);
     if (b.kind === "text") return { label: "text", caption: `${trimDot(b.caption) || "Text"}, ${placeOf(b.bbox)}.`, text: b.text ?? "", bbox };
     const sheet = b.kind === "character" && b.name ? sheetOf(art, b.name) : undefined;
-    const look = sheet?.prompt.trim() ? `${label(b.name!)}: ${lookOf(sheet)}` : "";
+    const look = sheet?.prompt.trim() ? `${label(b.name!)}: ${lookOf(sheet, item)}` : "";
     // ロボットや動物は object にする(character では人の姿にされやすい)
     return { label: b.kind === "character" && !sheet?.notHuman ? "character" : "object", caption: [b.caption.trim() ? `${trimDot(b.caption)}, ${placeOf(b.bbox)}.` : `${upper(placeOf(b.bbox))}.`, look].join(" ").trim(), bbox };
   });
