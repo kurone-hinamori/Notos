@@ -224,7 +224,8 @@ function mossGraph(m: ComfyModels, r: ImageRequest): { g: Graph; image: [string,
       g.upscaled = { class_type: "ImageUpscaleWithModel", inputs: { upscale_model: ["upscaler", 0], image } };
       image = ["upscaled", 0];
     }
-    g.scale = { class_type: "ImageScale", inputs: { image, upscale_method: "lanczos", width: r.final[0], height: r.final[1], crop: "center" } };
+    // 4倍に拡大した大きな画像を lanczos で縮めると、GPU のメモリを10GBほど余計に使った。縮めるときは area にする
+    g.scale = { class_type: "ImageScale", inputs: { image, upscale_method: g.upscaled ? "area" : "lanczos", width: r.final[0], height: r.final[1], crop: "center" } };
     image = ["scale", 0];
   }
   return { g, image };
@@ -281,7 +282,8 @@ function h3Graph(m: ComfyModels, r: ImageRequest): { g: Graph; image: [string, n
   g.decode = { class_type: "VAEDecode", inputs: { samples: ["sampler", 0], vae: ["vae", 0] } };
   let image: [string, number] = ["decode", 0];
   if (gw !== tw || gh !== th) {
-    g.scale = { class_type: "ImageScale", inputs: { image, upscale_method: "lanczos", width: tw, height: th, crop: "center" } };
+    // 約4MPから縮めるときは、メモリの少ない area にする
+    g.scale = { class_type: "ImageScale", inputs: { image, upscale_method: gw > tw ? "area" : "lanczos", width: tw, height: th, crop: "center" } };
     image = ["scale", 0];
   }
   return { g, image };
@@ -323,6 +325,26 @@ async function uploadImage(s: Url, name: string, bytes: Uint8Array): Promise<str
   return ((await res.json()) as { name: string }).name;
 }
 
+/**
+ * ComfyUI に、今回とは別のモデル(切り替える前のもの)が載っていれば外す。
+ * MOSS-Image を載せたまま MiniMax-H3-Image を動かしたら、GPU のメモリを使い切って PC ごと固まったことがあった。
+ * 載っているモデルは、直前の作業のワークフローで調べる(ComfyUI を起動し直した後は記録がなく、何も載っていない)。
+ */
+async function freeOtherModels(s: Url, m: ComfyModels, onStatus: (text: string) => void): Promise<void> {
+  const history = await getJson<Record<string, { prompt?: unknown[] }>>(s, "/history?max_items=1").catch(() => ({}) as Record<string, { prompt?: unknown[] }>);
+  const last = Object.values(history)[0]?.prompt?.[2] as Graph | undefined;
+  if (!last) return;
+  const used = (type: string, key: string) => Object.values(last).find((n) => n.class_type === type)?.inputs[key];
+  const unet = used("UNETLoader", "unet_name");
+  const clip = used("CLIPLoader", "clip_name");
+  if ((unet === undefined || unet === m.unet) && (clip === undefined || clip === m.clip)) return;
+  onStatus("前のモデルを ComfyUI から外しています");
+  const res = await post(s, "/free", { unload_models: true, free_memory: true });
+  if (!res.ok) return;
+  // 待機中の ComfyUI はすぐに外す。外し終わる前に次の作業が始まらないよう、少し待つ
+  await sleep(3000);
+}
+
 /** 画像を1枚作って PNG で受け取る。中断すると ComfyUI 側の処理も止める */
 export async function generateImage(
   s: Url,
@@ -334,6 +356,7 @@ export async function generateImage(
   const references = [];
   for (const ref of req.references ?? []) references.push({ ...ref, name: await uploadImage(s, ref.name, ref.bytes) });
   const redraw = req.redraw && { ...req.redraw, name: await uploadImage(s, req.redraw.name, req.redraw.bytes) };
+  await freeOtherModels(s, models, onStatus);
   const res = await post(s, "/prompt", { prompt: comfyWorkflow(models, { ...req, references, redraw }), client_id: "notos" });
   const sent = (await res.json().catch(() => ({}))) as { prompt_id?: string; error?: { message?: string }; node_errors?: unknown };
   if (!res.ok || !sent.prompt_id) throw new Error(`ComfyUI が受け付けませんでした:${sent.error?.message ?? res.status}`);
