@@ -127,6 +127,32 @@ fn save_story(app: AppHandle, story: Value) -> Result<(), String> {
     fs::rename(&tmp, &path).map_err(|e| e.to_string())
 }
 
+fn settings_path(app: &AppHandle) -> Result<PathBuf, String> {
+    let dir = app.path().app_data_dir().map_err(|e| e.to_string())?;
+    fs::create_dir_all(&dir).map_err(|e| e.to_string())?;
+    Ok(dir.join("settings.json"))
+}
+
+/// 設定。まだファイルがなければ null(WebView の localStorage は壊れて消えることがあったため、ファイルにする)
+#[tauri::command]
+fn load_settings(app: AppHandle) -> Result<Value, String> {
+    let path = settings_path(&app)?;
+    if !path.exists() {
+        return Ok(Value::Null);
+    }
+    let text = fs::read_to_string(path).map_err(|e| e.to_string())?;
+    serde_json::from_str(&text).map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+fn save_settings(app: AppHandle, settings: Value) -> Result<(), String> {
+    let path = settings_path(&app)?;
+    let tmp = path.with_extension("json.tmp");
+    let text = serde_json::to_string_pretty(&settings).map_err(|e| e.to_string())?;
+    fs::write(&tmp, text).map_err(|e| e.to_string())?;
+    fs::rename(&tmp, &path).map_err(|e| e.to_string())
+}
+
 #[tauri::command]
 fn delete_story(app: AppHandle, id: String) -> Result<(), String> {
     let path = story_path(&app, &id)?;
@@ -218,7 +244,9 @@ pub fn run() {
             delete_story,
             save_art,
             load_art,
-            delete_art
+            delete_art,
+            load_settings,
+            save_settings
         ])
         .run(tauri::generate_context!())
         .expect("error while running Notos");

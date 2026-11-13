@@ -9,7 +9,7 @@ const DUPLICATE_QUESTION =
   "各話の概要(タイトル・あらすじ・登場人物)も引き継ぎますか?\n\n" +
   "[OK] 引き継ぐ(設定資料・本文は作り直します)\n" +
   "[キャンセル] 引き継がない(各話の仕込みだけ残して、ガチャ・おまかせからやり直します)";
-import { loadSettings, loadStory, persistSettings } from "./lib/storage";
+import { loadSettings, loadSettingsFile, loadStory, persistSettings } from "./lib/storage";
 import { useStoryManager } from "./hooks";
 import { StoryList } from "./components/StoryList";
 import { StoryDetail } from "./components/StoryDetail";
@@ -35,7 +35,17 @@ export default function App() {
   const [loadError, setLoadError] = useState("");
   const mgr = useStoryManager(settings);
 
-  useEffect(() => persistSettings(settings), [settings]);
+  // 設定はファイルから読み直す(読み終わるまでは保存しない。古い値でファイルを上書きしないため)
+  const [settingsReady, setSettingsReady] = useState(false);
+  useEffect(() => {
+    loadSettingsFile()
+      .then((saved) => saved && setSettings(saved))
+      .catch(() => undefined)
+      .finally(() => setSettingsReady(true));
+  }, []);
+  useEffect(() => {
+    if (settingsReady) persistSettings(settings);
+  }, [settings, settingsReady]);
 
   // 本文の文字の大きさを画面全体に反映する
   useEffect(() => {

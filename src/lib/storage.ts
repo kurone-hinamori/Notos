@@ -99,7 +99,17 @@ export function loadSettings(): Settings {
   return { ...DEFAULT_SETTINGS };
 }
 
+/**
+ * アプリのデータフォルダーの settings.json から読む。まだなければ null。
+ * (WebView の localStorage は、保存データが壊れて、後から書いた設定が起動のたびに消えることがあった)
+ */
+export async function loadSettingsFile(): Promise<Settings | null> {
+  const saved = await invoke<Partial<Settings> | null>("load_settings");
+  return saved ? { ...DEFAULT_SETTINGS, ...saved } : null;
+}
+
 export function persistSettings(s: Settings) {
+  void invoke("save_settings", { settings: s }).catch(() => undefined);
   try {
     localStorage.setItem(SETTINGS_KEY, JSON.stringify(s));
   } catch {
