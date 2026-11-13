@@ -1,7 +1,8 @@
 import { fetch } from "@tauri-apps/plugin-http";
-import type { Settings } from "../types";
+import type { ImageEngine, ImageFiles, Settings } from "../types";
 
 type Url = Pick<Settings, "comfyUrl">;
+type Conn = Pick<Settings, "comfyUrl" | "imageEngine" | "imageFiles">;
 
 const base = (s: Url) => s.comfyUrl.replace(/\/+$/, "");
 
@@ -23,14 +24,36 @@ async function getJson<T>(s: Url, path: string, signal?: AbortSignal): Promise<T
 const post = (s: Url, path: string, body: unknown) => fetch(`${base(s)}${path}`, { method: "POST", headers: headers(s), body: JSON.stringify(body) });
 
 export interface ComfyModels {
+  engine: ImageEngine;
   unet: string;
   clip: string;
   vae: string;
   /** 拡大用のモデル。なければ通常の拡大をする */
   upscale?: string;
-  /** 画像を参照するための LoRA。なければ説明文だけで描く */
+  /** 画像を参照するための LoRA(MOSS-Image)。なければ説明文だけで描く */
   editLora?: string;
 }
+
+export const ENGINE_LABEL: Record<ImageEngine, string> = { moss: "MOSS-Image", minimax_h3: "MiniMax-H3-Image" };
+
+/** 画像生成のモデルが、シートの画像を参照できるか */
+export const canReference = (m: ComfyModels) => m.engine === "minimax_h3" || !!m.editLora;
+
+type FileKind = keyof Required<ImageFiles>;
+
+/** モデルごとに自動で選ぶファイル(名前の先頭で探す)と、見つからないときに示すファイル */
+const ENGINE_FILES: Record<ImageEngine, Record<FileKind, { prefixes: string[]; need: string }>> = {
+  moss: {
+    unet: { prefixes: ["moss_image_sft", "moss_image_base"], need: "moss_image_base_int8_convrot.safetensors(models/diffusion_models)" },
+    clip: { prefixes: ["qwen3.5_9b"], need: "qwen3.5_9b_w4a8_gptq.safetensors(models/text_encoders)" },
+    vae: { prefixes: ["flux2-vae"], need: "flux2-vae_small.safetensors(models/vae)" },
+  },
+  minimax_h3: {
+    unet: { prefixes: ["minimax_h3_image"], need: "minimax_h3_image_pruned_int8_convrot.safetensors(models/diffusion_models)" },
+    clip: { prefixes: ["qwen3vl_32b_minimax_h3"], need: "qwen3vl_32b_minimax_h3_int8_convrot.safetensors(models/text_encoders)" },
+    vae: { prefixes: ["minimax_h3_image_vae"], need: "minimax_h3_image_vae_fp16.safetensors(models/vae)" },
+  },
+};
 
 async function modelsOf(s: Url, node: string, input: string): Promise<string[]> {
   const info = await getJson<Record<string, { input: { required: Record<string, unknown[]> } }>>(s, `/object_info/${node}`);
@@ -39,25 +62,36 @@ async function modelsOf(s: Url, node: string, input: string): Promise<string[]> 
   return ((spec[1] as { options?: string[] } | undefined)?.options ?? []) as string[];
 }
 
-/** MOSS-Image に必要なモデルを探す。足りないときは、足りないファイルを示すエラーにする */
-export async function detectComfy(s: Url): Promise<ComfyModels> {
-  const [unets, clips, vaes, upscales, loras] = await Promise.all([
-    modelsOf(s, "UNETLoader", "unet_name"),
-    modelsOf(s, "CLIPLoader", "clip_name"),
-    modelsOf(s, "VAELoader", "vae_name"),
+/** ComfyUI にあるモデルのファイルの一覧(設定で選ぶため) */
+export async function comfyFileLists(s: Url): Promise<Record<FileKind, string[]>> {
+  const [unet, clip, vae] = await Promise.all([modelsOf(s, "UNETLoader", "unet_name"), modelsOf(s, "CLIPLoader", "clip_name"), modelsOf(s, "VAELoader", "vae_name")]);
+  return { unet, clip, vae };
+}
+
+/** 自動で選ぶときのファイル(設定の画面で「自動」の中身を見せるため) */
+export const autoFile = (engine: ImageEngine, kind: FileKind, list: string[]) =>
+  ENGINE_FILES[engine][kind].prefixes.map((p) => list.find((m) => m.startsWith(p))).find(Boolean);
+
+/** 設定で選んだモデルに必要なファイルを探す。足りないときは、足りないファイルを示すエラーにする */
+export async function detectComfy(s: Conn): Promise<ComfyModels> {
+  const engine = s.imageEngine ?? "moss";
+  const [lists, upscales, loras] = await Promise.all([
+    comfyFileLists(s),
     modelsOf(s, "UpscaleModelLoader", "model_name").catch(() => [] as string[]),
     modelsOf(s, "LoraLoaderModelOnly", "lora_name").catch(() => [] as string[]),
   ]);
-  const unet = unets.find((m) => m.startsWith("moss_image_sft")) ?? unets.find((m) => m.startsWith("moss_image_base"));
-  const clip = clips.find((m) => m.startsWith("qwen3.5_9b"));
-  const vae = vaes.find((m) => m.startsWith("flux2-vae"));
-  const missing = [
-    !unet && "moss_image_base_int8_convrot.safetensors(models/diffusion_models)",
-    !clip && "qwen3.5_9b_w4a8_gptq.safetensors(models/text_encoders)",
-    !vae && "flux2-vae_small.safetensors(models/vae)",
-  ].filter(Boolean);
-  if (missing.length) throw new Error(`MOSS-Image のモデルが見つかりません:${missing.join("、")}`);
-  return { unet: unet!, clip: clip!, vae: vae!, upscale: upscales.find((m) => /anime/i.test(m)) ?? upscales[0], editLora: loras.find((m) => m.startsWith("moss_image_edit")) };
+  const own = s.imageFiles?.[engine] ?? {};
+  const pick = (k: FileKind) => (own[k] ? lists[k].find((m) => m === own[k]) : autoFile(engine, k, lists[k]));
+  const missing = (["unet", "clip", "vae"] as const).flatMap((k) => (pick(k) ? [] : [own[k] ? `${own[k]}(設定で選んだファイル)` : ENGINE_FILES[engine][k].need]));
+  if (missing.length) throw new Error(`${ENGINE_LABEL[engine]} のモデルが見つかりません:${missing.join("、")}`);
+  return {
+    engine,
+    unet: pick("unet")!,
+    clip: pick("clip")!,
+    vae: pick("vae")!,
+    upscale: upscales.find((m) => /anime/i.test(m)) ?? upscales[0],
+    editLora: engine === "moss" ? loras.find((m) => m.startsWith("moss_image_edit")) : undefined,
+  };
 }
 
 /** 公式の推奨。短く保つ。作品は書籍として出すので、nsfw は常に入れる */
@@ -65,9 +99,12 @@ export const DEFAULT_NEGATIVE = "nsfw, worst quality, bad anatomy, watermark, jp
 const NEGATIVE = DEFAULT_NEGATIVE;
 
 const negativeOf = (r: { negative?: string; baseNegative?: string }) => {
-  const base = r.baseNegative?.trim() ? (/nsfw/i.test(r.baseNegative) ? r.baseNegative.trim() : `nsfw, ${r.baseNegative.trim()}`) : NEGATIVE;
+  const base = r.baseNegative?.trim() ? (/nsfw/i.test(r.baseNegative) ? r.baseNegative.trim() : `nsfw, ${r.baseNegative.trim()}`) : NEGATIVE;
   return r.negative ? `${base}, ${r.negative}` : base;
 };
+
+/** 0〜1000 の [上, 左, 下, 右] */
+export type Box1000 = [number, number, number, number];
 
 export interface ImageRequest {
   prompt: string;
@@ -76,13 +113,17 @@ export interface ImageRequest {
   /** 仕上がりの大きさ。生成の大きさと違えば拡大・切り抜きする */
   final?: [number, number];
   seed: number;
-  /** 既定に足す否定のプロンプト */
+  /** 既定に足す否定のプロンプト(MiniMax-H3-Image では効かない) */
   negative?: string;
   /** 既定の代わりに使う否定のプロンプト(nsfw は必ず入れる) */
   baseNegative?: string;
-  /** 参照する画像(models.editLora があるときだけ渡す) */
+  /** 参照する画像 */
   references?: { name: string; bytes: Uint8Array }[];
+  /** 描き直す元の画像と、描き直す範囲。範囲の外は元の画像のまま残す */
+  redraw?: { name: string; bytes: Uint8Array; boxes: Box1000[] };
 }
+
+type Graph = Record<string, { class_type: string; inputs: Record<string, unknown> }>;
 
 const SAVE_NODE = "save";
 
@@ -91,9 +132,45 @@ const STALL_MS = 25 * 60_000;
 /** ComfyUI に送られてからこれより長く処理中なら、止まったとみなす */
 const STALL_QUEUED_MS = 60 * 60_000;
 
-/** ComfyUI の API 形式のワークフロー(公式テンプレートの MOSS-Image: Text to Image と同じ設定) */
-export function mossWorkflow(m: ComfyModels, r: ImageRequest): Record<string, { class_type: string; inputs: Record<string, unknown> }> {
-  const g: Record<string, { class_type: string; inputs: Record<string, unknown> }> = {
+/** 範囲を塗ったマスク(w×h)を作り、そのノードの名前を返す */
+function maskNodes(g: Graph, id: string, w: number, h: number, boxes: Box1000[]): string {
+  g[`${id}_base`] = { class_type: "SolidMask", inputs: { value: 0, width: w, height: h } };
+  let last = `${id}_base`;
+  boxes.forEach(([y0, x0, y1, x1], i) => {
+    const x = Math.max(0, Math.floor((x0 * w) / 1000));
+    const y = Math.max(0, Math.floor((y0 * h) / 1000));
+    const bw = Math.max(8, Math.min(w, Math.ceil((x1 * w) / 1000)) - x);
+    const bh = Math.max(8, Math.min(h, Math.ceil((y1 * h) / 1000)) - y);
+    g[`${id}_box${i}`] = { class_type: "SolidMask", inputs: { value: 1, width: bw, height: bh } };
+    g[`${id}_add${i}`] = { class_type: "MaskComposite", inputs: { destination: [last, 0], source: [`${id}_box${i}`, 0], x, y, operation: "add" } };
+    last = `${id}_add${i}`;
+  });
+  return last;
+}
+
+/** 描き直すとき:元の画像を描く大きさにして、範囲の外は元のままにする潜在画像 */
+function redrawLatent(g: Graph, image: string, w: number, h: number, boxes: Box1000[]): [string, number] {
+  g.redrawSrc = { class_type: "LoadImage", inputs: { image } };
+  g.redrawGen = { class_type: "ImageScale", inputs: { image: ["redrawSrc", 0], upscale_method: "lanczos", width: w, height: h, crop: "center" } };
+  g.redrawEnc = { class_type: "VAEEncode", inputs: { pixels: ["redrawGen", 0], vae: ["vae", 0] } };
+  g.redrawNoise = { class_type: "SetLatentNoiseMask", inputs: { samples: ["redrawEnc", 0], mask: [maskNodes(g, "genMask", w, h, boxes), 0] } };
+  return ["redrawNoise", 0];
+}
+
+/** 描き直した画像を、仕上がりの大きさの元の画像に、範囲だけ(境目はぼかして)重ねる */
+function redrawComposite(g: Graph, image: [string, number], w: number, h: number, boxes: Box1000[]): [string, number] {
+  g.redrawFinal = { class_type: "ImageScale", inputs: { image: ["redrawSrc", 0], upscale_method: "lanczos", width: w, height: h, crop: "center" } };
+  g.redrawMaskImage = { class_type: "MaskToImage", inputs: { mask: [maskNodes(g, "finalMask", w, h, boxes), 0] } };
+  const radius = Math.max(4, Math.min(31, Math.round(Math.min(w, h) / 120)));
+  g.redrawBlur = { class_type: "ImageBlur", inputs: { image: ["redrawMaskImage", 0], blur_radius: radius, sigma: radius / 2 } };
+  g.redrawSoft = { class_type: "ImageToMask", inputs: { image: ["redrawBlur", 0], channel: "red" } };
+  g.redrawComp = { class_type: "ImageCompositeMasked", inputs: { destination: ["redrawFinal", 0], source: image, x: 0, y: 0, resize_source: false, mask: ["redrawSoft", 0] } };
+  return ["redrawComp", 0];
+}
+
+/** MOSS-Image のワークフロー(公式テンプレートの MOSS-Image: Text to Image / Image Edit と同じ設定) */
+function mossGraph(m: ComfyModels, r: ImageRequest): { g: Graph; image: [string, number] } {
+  const g: Graph = {
     unet: { class_type: "UNETLoader", inputs: { unet_name: m.unet, weight_dtype: "default" } },
     clip: { class_type: "CLIPLoader", inputs: { clip_name: m.clip, type: "moss_image", device: "default" } },
     vae: { class_type: "VAELoader", inputs: { vae_name: m.vae } },
@@ -117,6 +194,10 @@ export function mossWorkflow(m: ComfyModels, r: ImageRequest): Record<string, { 
     },
     decode: { class_type: "VAEDecode", inputs: { samples: ["sampler", 0], vae: ["vae", 0] } },
   };
+  if (r.redraw) {
+    g.sampler.inputs.latent_image = redrawLatent(g, r.redraw.name, r.width, r.height, r.redraw.boxes);
+    delete g.latent;
+  }
   // 参照あり:公式テンプレートの MOSS-Image: Image Edit と同じ設定
   const refs = r.references ?? [];
   if (refs.length && m.editLora) {
@@ -146,10 +227,79 @@ export function mossWorkflow(m: ComfyModels, r: ImageRequest): Record<string, { 
     g.scale = { class_type: "ImageScale", inputs: { image, upscale_method: "lanczos", width: r.final[0], height: r.final[1], crop: "center" } };
     image = ["scale", 0];
   }
+  return { g, image };
+}
+
+/** MiniMax-H3-Image は 4MP より小さいと崩れる(公式の注意)ので、仕上がりの縦横比のまま約4MPで描く */
+export function h3Size(w: number, h: number): [number, number] {
+  const k = Math.sqrt(4_194_304 / (w * h));
+  const round = (v: number) => Math.max(1024, Math.round((v * k) / 32) * 32);
+  return [round(w), round(h)];
+}
+
+/** MiniMax-H3-Image のワークフロー(公式テンプレートと同じ:6ステップ、CFG 1、ネガティブなし) */
+function h3Graph(m: ComfyModels, r: ImageRequest): { g: Graph; image: [string, number] } {
+  const [tw, th] = r.final ?? [r.width, r.height];
+  const [gw, gh] = h3Size(tw, th);
+  const images: Record<string, [string, number]> = {};
+  const g: Graph = {
+    unet: { class_type: "UNETLoader", inputs: { unet_name: m.unet, weight_dtype: "default" } },
+    clip: { class_type: "CLIPLoader", inputs: { clip_name: m.clip, type: "minimax", device: "default" } },
+    vae: { class_type: "VAELoader", inputs: { vae_name: m.vae } },
+  };
+  (r.references ?? []).forEach((ref, i) => {
+    g[`ref${i}`] = { class_type: "LoadImage", inputs: { image: ref.name } };
+    g[`refScaled${i}`] = { class_type: "ImageScaleToTotalPixels", inputs: { image: [`ref${i}`, 0], upscale_method: "lanczos", megapixels: 1, resolution_steps: 32 } };
+    images[`images.image_${i + 1}`] = [`refScaled${i}`, 0];
+  });
+  let prompt = r.prompt;
+  if (r.redraw) {
+    // 描き直すときは元の絵も見せる(見せないと、描き直した所だけ白っぽい板のようになり、背景となじまなかった)
+    const n = Object.keys(images).length + 1;
+    g.redrawRef = { class_type: "LoadImage", inputs: { image: r.redraw.name } };
+    g.redrawRefScaled = { class_type: "ImageScaleToTotalPixels", inputs: { image: ["redrawRef", 0], upscale_method: "lanczos", megapixels: 1, resolution_steps: 32 } };
+    images[`images.image_${n}`] = ["redrawRefScaled", 0];
+    prompt += `\n<Picture ${n}> is the current version of this same illustration. Keep its background, colors and lighting, and blend seamlessly with it.`;
+  }
+  g.positive = { class_type: "MiniMaxH3ImageConditioning", inputs: { clip: ["clip", 0], vae: ["vae", 0], prompt, width: gw, height: gh, ...images } };
+  g.negative = { class_type: "ConditioningZeroOut", inputs: { conditioning: ["positive", 0] } };
+  g.sampler = {
+    class_type: "KSampler",
+    inputs: {
+      model: ["unet", 0],
+      seed: r.seed,
+      steps: 6,
+      cfg: 1,
+      sampler_name: "euler",
+      scheduler: "simple",
+      positive: ["positive", 0],
+      negative: ["negative", 0],
+      latent_image: r.redraw ? redrawLatent(g, r.redraw.name, gw, gh, r.redraw.boxes) : ["positive", 1],
+      denoise: 1,
+    },
+  };
+  g.decode = { class_type: "VAEDecode", inputs: { samples: ["sampler", 0], vae: ["vae", 0] } };
+  let image: [string, number] = ["decode", 0];
+  if (gw !== tw || gh !== th) {
+    g.scale = { class_type: "ImageScale", inputs: { image, upscale_method: "lanczos", width: tw, height: th, crop: "center" } };
+    image = ["scale", 0];
+  }
+  return { g, image };
+}
+
+/** ComfyUI の API 形式のワークフロー */
+export function comfyWorkflow(m: ComfyModels, r: ImageRequest): Graph {
+  const { g, image: drawn } = m.engine === "minimax_h3" ? h3Graph(m, r) : mossGraph(m, r);
+  const [w, h] = r.final ?? [r.width, r.height];
+  // 描き直したときは、範囲の外を元の画像のまま残す
+  const image = r.redraw ? redrawComposite(g, drawn, w, h, r.redraw.boxes) : drawn;
   // 利用者の ComfyUI の output フォルダーを増やさないよう、一時ファイルとして受け取る
   g[SAVE_NODE] = { class_type: "PreviewImage", inputs: { images: image } };
   return g;
 }
+
+/** テスト用のスクリプトが使う、以前の名前 */
+export const mossWorkflow = (m: Omit<ComfyModels, "engine"> & { engine?: ImageEngine }, r: ImageRequest) => comfyWorkflow({ ...m, engine: m.engine ?? "moss" }, r);
 
 interface HistoryEntry {
   status?: { status_str?: string; messages?: [string, { exception_message?: string; node_type?: string }][] };
@@ -183,7 +333,8 @@ export async function generateImage(
 ): Promise<Uint8Array> {
   const references = [];
   for (const ref of req.references ?? []) references.push({ ...ref, name: await uploadImage(s, ref.name, ref.bytes) });
-  const res = await post(s, "/prompt", { prompt: mossWorkflow(models, { ...req, references }), client_id: "notos" });
+  const redraw = req.redraw && { ...req.redraw, name: await uploadImage(s, req.redraw.name, req.redraw.bytes) };
+  const res = await post(s, "/prompt", { prompt: comfyWorkflow(models, { ...req, references, redraw }), client_id: "notos" });
   const sent = (await res.json().catch(() => ({}))) as { prompt_id?: string; error?: { message?: string }; node_errors?: unknown };
   if (!res.ok || !sent.prompt_id) throw new Error(`ComfyUI が受け付けませんでした:${sent.error?.message ?? res.status}`);
   const id = sent.prompt_id;

@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 import type { ArtBox } from "../../types";
-import { textBox, thingBox } from "../../lib/art";
+import { redrawArea, textBox, thingBox } from "../../lib/art";
 import { loadArt } from "../../lib/storage";
 
 type Bbox = ArtBox["bbox"];
@@ -59,6 +59,10 @@ export function ArtLayoutEditor(props: {
   /** 訳している枠の id */
   translating: string;
   onChange: (boxes: ArtBox[]) => void;
+  /** 採用中の画像の、この枠の中だけを描き直す(採用中の画像がないときは undefined) */
+  onRedraw?: (id: string) => void;
+  /** 描き直せないとき(画像の作業中など) */
+  redrawDisabled?: boolean;
 }) {
   const { boxes, onChange } = props;
   const [selected, setSelected] = useState<string>("");
@@ -244,6 +248,24 @@ export function ArtLayoutEditor(props: {
                 />
               </label>
             </div>
+            {props.onRedraw && (
+              <div className="stack">
+                <div className="row wrap">
+                  <button className="small" disabled={props.redrawDisabled} onClick={() => props.onRedraw!(sel.id)}>
+                    この枠だけ描き直す
+                  </button>
+                  <span className="muted small-text">採用中の画像の、枠の中だけを描き直して新しい画像にします。枠の外はそのまま残ります。</span>
+                </div>
+                {(() => {
+                  const with_ = redrawArea(boxes, [sel.id]).ids.filter((id) => id !== sel.id);
+                  return with_.length ? (
+                    <span className="muted small-text">
+                      重なっている文字の枠も一緒に描き直します:{with_.map((id) => `${boxes.findIndex((b) => b.id === id) + 1} ${boxLabel(boxes.find((b) => b.id === id)!)}`).join("、")}
+                    </span>
+                  ) : null;
+                })()}
+              </div>
+            )}
             {props.translating === sel.id ? (
               <span className="running small-text">● 英語に訳しています</span>
             ) : (

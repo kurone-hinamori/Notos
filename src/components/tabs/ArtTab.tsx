@@ -4,8 +4,8 @@ import { writeFile } from "@tauri-apps/plugin-fs";
 import type { ArtBox, ArtImage, ArtItem, ArtKind, ArtSet, CharacterSheet, Doc, Settings } from "../../types";
 import { isAnthology } from "../../types";
 import type { ArtJob } from "../../hooks";
-import { ART_KINDS, ART_KIND_ORDER, DEFAULT_ART_STYLE, artCharacters, artPlaces, artNegative, artReferences, needsNegativeEn, staleLooks, staleNegative, chosenImage, coverTextBoxes, emptyArt, exportArtImage, fullArtPrompt, newArtItem, overlaysCoverText, toGrayscale, usesReference } from "../../lib/art";
-import { DEFAULT_NEGATIVE, detectComfy, generateImage, type ComfyModels } from "../../lib/comfy";
+import { ART_KINDS, ART_KIND_ORDER, DEFAULT_ART_STYLE, artCharacters, artPlaces, artNegative, artReferences, needsNegativeEn, redrawArea, staleLooks, staleNegative, chosenImage, coverTextBoxes, emptyArt, exportArtImage, fullArtPrompt, newArtItem, overlaysCoverText, toGrayscale, usesReference } from "../../lib/art";
+import { DEFAULT_NEGATIVE, ENGINE_LABEL, canReference, detectComfy, generateImage, type Box1000, type ComfyModels } from "../../lib/comfy";
 import { unloadModel } from "../../lib/ollama";
 import { generateArtCaption, generateArtLooks, translateArtText } from "../../lib/pipeline";
 import { artCaptionPrompt, artLooksPrompt, artLookTrimPrompt, artNegativePrompt, artTranslatePrompt } from "../../lib/prompts";
@@ -241,7 +241,8 @@ function ArtItemCard(props: {
     });
   };
 
-  const generate = () =>
+  /** 画像を作る。redraw があれば、採用中の画像のその範囲だけを描き直す */
+  const generate = (redraw?: { file: string; boxes: Box1000[] }) =>
     void control.start(docId, item.id, async (signal, stage) => {
       translation.current?.abort();
       boxTranslation.current?.abort();
@@ -295,15 +296,25 @@ function ArtItemCard(props: {
       await unloadModel(settings);
       const m = models ?? (await detectComfy(settings));
       for (let n = 0; n < count; n++) {
-        const prefix = count > 1 ? `${n + 1}/${count}枚目:` : "";
+        const prefix = (redraw ? "枠の描き直し:" : "") + (count > 1 ? `${n + 1}/${count}枚目:` : "");
         const seed = Math.floor(Math.random() * MAX_SEED);
         const [width, height] = item.size ?? [k.width, k.height];
-        // LoRA がなければ、参照せず説明文だけで描く
-        const target = m.editLora ? current : { ...current, noReference: true };
-        const prompt = fullArtPrompt(art, target);
+        // 参照できないモデル(LoRA のない MOSS-Image)なら、参照せず説明文だけで描く
+        const target = canReference(m) ? current : { ...current, noReference: true };
+        const prompt = fullArtPrompt(art, target, m.engine);
         const references = [];
         for (const f of artReferences(art, target)) references.push({ name: `notos_${f}.png`, bytes: await loadArt(docId, f) });
-        const png = await generateImage(settings, m, { prompt, width, height, final: k.final, seed, references, negative: artNegative(current), baseNegative: art.negative }, signal, (t) => stage(prefix + t));
+        const png = await generateImage(settings, m, {
+            prompt,
+            width,
+            height,
+            final: k.final,
+            seed,
+            references,
+            negative: artNegative(current),
+            baseNegative: art.negative,
+            redraw: redraw && { name: `notos_redraw_${redraw.file}.png`, bytes: await loadArt(docId, redraw.file), boxes: redraw.boxes },
+          }, signal, (t) => stage(prefix + t));
         const bytes = k.mono ? await toGrayscale(png) : png;
         const file = newId();
         await saveArt(docId, file, bytes);
@@ -481,6 +492,9 @@ function ArtItemCard(props: {
             ) : (
               <span className="muted small-text">英語:{item.negativeEn}</span>
             ))}
+          {models?.engine === "minimax_h3" && item.negative?.trim() && (
+            <span className="muted small-text">MiniMax-H3-Image ではネガティブプロンプトは効きません。人物の外見から除くことだけをします</span>
+          )}
         </label>
       )}
 
@@ -498,6 +512,8 @@ function ArtItemCard(props: {
             author={author}
             translating={boxTranslating}
             onChange={(layout) => void patch((x) => void (x.layout = layout.length ? layout : undefined))}
+            onRedraw={chosen ? (id) => generate({ file: chosen.file, boxes: redrawArea(item.layout ?? [], [id]).boxes }) : undefined}
+            redrawDisabled={busy || props.running || !models}
           />
           {item.kind === "cover" && !item.layout?.some((b) => b.kind === "text") && (
             <button className="small" onClick={() => void patch((x) => void (x.layout = [...(x.layout ?? []), ...coverTextBoxes(doc.title, author)]))}>
@@ -515,7 +531,7 @@ function ArtItemCard(props: {
           className="small primary"
           disabled={busy || props.running || !models || !(item.prompt.trim() || item.promptJa?.trim() || item.layout?.length)}
           title={props.running ? "本文の生成中は画像を作れません(同じGPUを使うため)" : undefined}
-          onClick={generate}
+          onClick={() => generate()}
         >
           画像を作る
         </button>
@@ -526,7 +542,7 @@ function ArtItemCard(props: {
             </option>
           ))}
         </select>
-        {models?.editLora && referable > 0 && (
+        {models && canReference(models) && referable > 0 && (
           <label className="check" title="人物の見た目が揃いやすくなりますが、時間は長くかかります">
             <input type="checkbox" checked={usesReference(item)} onChange={(e) => void patch((x) => void (x.noReference = !e.target.checked))} />
             シートの画像を参照する({referable}人)
@@ -614,19 +630,23 @@ export function ArtTab(props: { doc: Doc; settings: Settings; running: boolean; 
     try {
       const m = await detectComfy(settings);
       setModels(m);
-      setStatus(`接続しました:${m.unet}${m.upscale ? ` / 拡大:${m.upscale}` : ""}${m.editLora ? " / シートの画像の参照:可" : " / シートの画像の参照:不可(説明文だけで描きます)"}`);
+      setStatus(
+        `接続しました:${ENGINE_LABEL[m.engine]}(${m.unet})${m.upscale && m.engine === "moss" ? ` / 拡大:${m.upscale}` : ""}${canReference(m) ? " / シートの画像の参照:可" : " / シートの画像の参照:不可(説明文だけで描きます)"}`,
+      );
     } catch (e) {
       setModels(null);
       const text = e instanceof Error ? e.message : String(e);
-      setStatus(text.startsWith("MOSS-Image") ? text : `ComfyUI に接続できません(${settings.comfyUrl})。起動しているか確認してください。`);
+      setStatus(text.includes("のモデルが見つかりません") ? `${text}(設定の「画像生成(ComfyUI)」でモデルを変えられます)` : `ComfyUI に接続できません(${settings.comfyUrl})。起動しているか確認してください。`);
     }
   };
 
+  // 設定で URL やモデルを変えたら、つなぎ直す
+  const connection = JSON.stringify([settings.comfyUrl, settings.imageEngine ?? "moss", settings.imageFiles ?? {}]);
   useEffect(() => {
-    if (checked.current === settings.comfyUrl) return;
-    checked.current = settings.comfyUrl;
+    if (checked.current === connection) return;
+    checked.current = connection;
     void check();
-  }, [settings.comfyUrl]);
+  }, [connection]);
 
   const add = (item: ArtItem) =>
     void control.update(doc.id, (d) => {

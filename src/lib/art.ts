@@ -1,4 +1,4 @@
-import type { ArtBox, ArtImage, ArtItem, ArtKind, ArtSet, CharacterSheet, Doc } from "../types";
+import type { ArtBox, ArtImage, ArtItem, ArtKind, ArtSet, CharacterSheet, Doc, ImageEngine } from "../types";
 import { isAnthology } from "../types";
 import { loadArt } from "./storage";
 import { newId, sameName, splitScenes } from "./text";
@@ -213,8 +213,10 @@ function referencedPeople(art: ArtSet, item: ArtItem): { name: string; file: str
 
 export const artReferences = (art: ArtSet, item: ArtItem) => referencedPeople(art, item).map((x) => x.file);
 
-const referenceLead = (n: number) =>
-  n === 1
+const referenceLead = (n: number, engine: ImageEngine) =>
+  engine === "minimax_h3"
+    ? `${Array.from({ length: n }, (_, i) => `<Picture ${i + 1}> is the character design sheet of ${n === 1 ? "the character" : `Character ${i + 1}`}.`).join(" ")} Draw ${n === 1 ? "this same character with the same face" : "these same characters with the same faces"}, hair, clothes and colors in a new single illustration. Do not copy the layout of the sheets.`
+    : n === 1
     ? "The reference image is a character design sheet. Draw this same character with the same face, hair, clothes and colors in a new single illustration. Do not copy the layout of the sheet."
     : `The reference images are character design sheets, one for each of Character 1 to Character ${n}, in the same order. Draw these same characters with the same faces, hair, clothes and colors in a new single illustration. Do not copy the layout of the sheets.`;
 
@@ -250,7 +252,7 @@ export function staleLooks(art: ArtSet, item: ArtItem): { name: string; from: st
  * 参照するときも説明文を併用する(画像だけでは髪の長さなどが崩れた)。
  * 枠があれば MOSS-Image の JSON レイアウトにし、枠に置いた人物の外見はその枠の説明に入れる。
  */
-export function fullArtPrompt(art: ArtSet, item: ArtItem): string {
+export function fullArtPrompt(art: ArtSet, item: ArtItem, engine: ImageEngine = "moss"): string {
   const k = ART_KINDS[item.kind];
   const frame = item.kind === "sheet" && item.notHuman ? THING_SHEET_FRAME : k.frame;
   const referenced = referencedPeople(art, item).map((x) => x.name);
@@ -264,7 +266,7 @@ export function fullArtPrompt(art: ArtSet, item: ArtItem): string {
   const people = numbered.filter((n) => !boxed.has(n)).map((n) => `${label(n)}: ${lookOf(sheetOf(art, n)!, item)}`);
   const hasText = boxes.some((b) => b.kind === "text");
   const summary = [
-    referenced.length ? referenceLead(referenced.length) : "",
+    referenced.length ? referenceLead(referenced.length, engine) : "",
     art.style.trim(),
     frame,
     item.prompt.trim(),
@@ -275,6 +277,21 @@ export function fullArtPrompt(art: ArtSet, item: ArtItem): string {
     .filter(Boolean)
     .join("\n");
   if (!boxes.length) return summary;
+  // MiniMax-H3-Image には枠の機能がないので、位置を文章で伝える
+  if (engine === "minimax_h3") {
+    const lines = boxes.map((b) => {
+      if (b.kind === "text") {
+        // 「/」などでつなぐと、その記号まで描くので、行ごとに引用して伝える
+        const lines = (b.text ?? "").split("\n").map((l) => l.trim()).filter(Boolean);
+        const what = lines.length > 1 ? `The text in ${lines.length} lines (${lines.map((l, i) => `line ${i + 1}: "${l}"`).join(", ")})` : `The text "${lines[0] ?? ""}"`;
+        return `${what} is written ${placeOf(b.bbox).replace(/^placed /, "")}: ${trimDot(b.caption) || "text"}.`;
+      }
+      const sheet = b.kind === "character" && b.name ? sheetOf(art, b.name) : undefined;
+      const who = sheet?.prompt.trim() ? `${label(b.name!)}: ${lookOf(sheet, item)}` : "";
+      return [b.caption.trim() ? `${trimDot(b.caption)}, ${placeOf(b.bbox)}.` : "", who].filter(Boolean).join(" ");
+    });
+    return [summary, ...lines.filter(Boolean)].join("\n");
+  }
   const [width, height] = item.size ?? [k.width, k.height];
   const items = boxes.map((b) => {
     const bbox = pixelBox(b.bbox, width, height);
@@ -463,4 +480,26 @@ export async function exportArtImage(doc: Doc, item: ArtItem | undefined, file: 
   const png = await loadArt(doc.id, file);
   const text = item?.kind === "cover" && overlaysCoverText(item) ? { title: doc.title, author } : undefined;
   return toJpeg(png, text);
+}
+
+/**
+ * 枠の描き直しで描き直す範囲(0〜1000)。選んだ枠に少し余白を付け、その範囲にかかる文字の枠は丸ごと含める
+ * (題名の枠だけを描き直したら、少しかかっていたサブタイトルが途中で切れて崩れたため)
+ */
+export function redrawArea(layout: ArtBox[], ids: string[]): { ids: string[]; boxes: [number, number, number, number][] } {
+  const pad = 15;
+  const grow = ([y0, x0, y1, x1]: ArtBox["bbox"]): [number, number, number, number] => [Math.max(0, y0 - pad), Math.max(0, x0 - pad), Math.min(1000, y1 + pad), Math.min(1000, x1 + pad)];
+  const hits = (a: number[], b: number[]) => a[0] < b[2] && b[0] < a[2] && a[1] < b[3] && b[1] < a[3];
+  const chosen = layout.filter((b) => ids.includes(b.id));
+  const boxes = chosen.map((b) => grow(b.bbox));
+  for (let added = true; added; ) {
+    added = false;
+    for (const b of layout) {
+      if (b.kind !== "text" || chosen.includes(b) || !validBox(b) || !boxes.some((a) => hits(a, b.bbox))) continue;
+      chosen.push(b);
+      boxes.push(grow(b.bbox));
+      added = true;
+    }
+  }
+  return { ids: chosen.map((b) => b.id), boxes };
 }

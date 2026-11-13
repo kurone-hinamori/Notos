@@ -1,11 +1,88 @@
 import { useEffect, useState } from "react";
 import { getVersion } from "@tauri-apps/api/app";
 import { check } from "@tauri-apps/plugin-updater";
-import type { Settings } from "../types";
+import type { ImageEngine, ImageFiles, Settings } from "../types";
+import { ENGINE_LABEL, autoFile, comfyFileLists } from "../lib/comfy";
 import { listModels } from "../lib/ollama";
 import { installUpdate } from "../lib/updater";
 import { Field } from "./ui";
 import { NUMBER_STYLE_LABEL, type NumberStyle } from "../lib/numbers";
+
+const ENGINE_NOTE: Record<ImageEngine, string> = {
+  moss: "枠(人物・文字の位置)をそのまま使えます。Edit LoRA があればシートの画像を参照します。",
+  minimax_h3:
+    "約4MPで描いて仕上がりの大きさに縮めます。シートの画像はそのまま参照できます。枠は位置を文章で伝えるので、MOSS-Image ほど正確ではありません。ネガティブプロンプトは効きません。",
+};
+
+const FILE_LABEL: Record<keyof Required<ImageFiles>, string> = { unet: "拡散モデル(diffusion_models)", clip: "テキストエンコーダー(text_encoders)", vae: "VAE(vae)" };
+
+/** 画像生成のモデルと、ComfyUI のファイルを選ぶ */
+function ImageModelSettings(props: { settings: Settings; onChange: (s: Settings) => void }) {
+  const { settings, onChange } = props;
+  const engine = settings.imageEngine ?? "moss";
+  const own = settings.imageFiles?.[engine] ?? {};
+  const [lists, setLists] = useState<Record<keyof Required<ImageFiles>, string[]> | null>(null);
+  const [error, setError] = useState("");
+
+  const load = async () => {
+    setError("");
+    try {
+      setLists(await comfyFileLists(settings));
+    } catch {
+      setLists(null);
+      setError(`ComfyUI に接続できません(${settings.comfyUrl})。起動してから「ファイルの一覧を更新」を押してください。`);
+    }
+  };
+
+  useEffect(() => {
+    void load();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [settings.comfyUrl]);
+
+  const setFile = (k: keyof Required<ImageFiles>, v: string) =>
+    onChange({ ...settings, imageFiles: { ...settings.imageFiles, [engine]: { ...own, [k]: v || undefined } } });
+
+  return (
+    <div className="stack">
+      <label className="field">
+        <span>画像生成のモデル</span>
+        <select value={engine} onChange={(e) => onChange({ ...settings, imageEngine: e.target.value as ImageEngine })}>
+          {(Object.keys(ENGINE_LABEL) as ImageEngine[]).map((k) => (
+            <option key={k} value={k}>
+              {ENGINE_LABEL[k]}
+            </option>
+          ))}
+        </select>
+        <small className="muted">{ENGINE_NOTE[engine]}</small>
+      </label>
+      {(["unet", "clip", "vae"] as const).map((k) => {
+        const list = lists?.[k] ?? [];
+        const auto = lists ? autoFile(engine, k, list) : undefined;
+        return (
+          <label key={k} className="field">
+            <span>{FILE_LABEL[k]}</span>
+            <select value={own[k] ?? ""} onChange={(e) => setFile(k, e.target.value)}>
+              <option value="">自動{lists ? `(${auto ?? "見つかりません"})` : ""}</option>
+              {own[k] && !list.includes(own[k]!) && <option value={own[k]}>{own[k]}(ComfyUI にありません)</option>}
+              {list.map((m) => (
+                <option key={m} value={m}>
+                  {m}
+                </option>
+              ))}
+            </select>
+          </label>
+        );
+      })}
+      <div className="row wrap">
+        <button className="small" onClick={() => void load()}>
+          ファイルの一覧を更新
+        </button>
+        {error && <span className="error small-text">{error}</span>}
+      </div>
+      <small className="muted">ファイルは ComfyUI の models フォルダーにあるものから選べます。接続の確認は各作品の「表紙・挿絵」タブで行えます。</small>
+    </div>
+  );
+}
 
 export function SettingsView(props: { settings: Settings; generating: boolean; onChange: (s: Settings) => void }) {
   const { settings, onChange } = props;
@@ -66,7 +143,7 @@ export function SettingsView(props: { settings: Settings; generating: boolean; o
       <section className="card">
         <h3>画像生成(ComfyUI)</h3>
         <Field label="ComfyUI の URL" value={settings.comfyUrl} onChange={(v) => onChange({ ...settings, comfyUrl: v })} />
-        <small className="muted">表紙や挿絵は、起動中の ComfyUI の MOSS-Image で作ります。接続の確認は各作品の「表紙・挿絵」タブで行えます。</small>
+        <ImageModelSettings settings={settings} onChange={onChange} />
       </section>
       <section className="card">
         <h3>ローカルLLM(Ollama)</h3>

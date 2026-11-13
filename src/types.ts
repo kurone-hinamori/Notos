@@ -389,10 +389,22 @@ export interface StorySummary {
   charCount: number;
 }
 
+export type ImageEngine = "moss" | "minimax_h3";
+
+export interface ImageFiles {
+  unet?: string;
+  clip?: string;
+  vae?: string;
+}
+
 export interface Settings {
   ollamaUrl: string;
   /** 画像生成に使う ComfyUI の URL */
   comfyUrl: string;
+  /** 画像生成のモデル(未設定は MOSS-Image) */
+  imageEngine?: ImageEngine;
+  /** モデルごとの ComfyUI のファイル(空なら自動で選ぶ) */
+  imageFiles?: Partial<Record<ImageEngine, ImageFiles>>;
   model: string;
   temperature: number;
   numCtx: number;
