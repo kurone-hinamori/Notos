@@ -1,4 +1,4 @@
-import { useState, type ReactNode } from "react";
+import { useEffect, useState, type ReactNode } from "react";
 import type { RubyRule, SpeechBracket, Story } from "../types";
 import { SPEECH_BRACKETS } from "../types";
 import { hasLine, lineBracketOk, linePos, parseLines } from "../lib/text";
@@ -146,5 +146,42 @@ export function BracketSelect(props: { value: SpeechBracket | undefined; onChang
         ))}
       </select>
     </label>
+  );
+}
+
+/** 長い画面(連載の情報・表紙と挿絵)の左に置く、各項目へ移動するメニュー。いま見ている項目を強調する */
+export function SectionMenu({ sections }: { sections: [string, string][] }) {
+  const [current, setCurrent] = useState(sections[0]?.[0] ?? "");
+  useEffect(() => {
+    const main = document.querySelector(".main");
+    if (!main) return;
+    const onScroll = () => {
+      // 上端(固定表示のタブの下)を過ぎた最後の項目を、いま見ている項目とする
+      const top = main.getBoundingClientRect().top + 80;
+      let hit = sections[0]?.[0] ?? "";
+      for (const [id] of sections) {
+        const el = document.getElementById(id);
+        if (el && el.getBoundingClientRect().top <= top) hit = id;
+      }
+      // 一番下までスクロールしたら、最後の項目にする
+      if (main.scrollTop + main.clientHeight >= main.scrollHeight - 4) hit = sections[sections.length - 1]?.[0] ?? hit;
+      setCurrent(hit);
+    };
+    onScroll();
+    main.addEventListener("scroll", onScroll, { passive: true });
+    return () => main.removeEventListener("scroll", onScroll);
+  }, [sections.map(([id]) => id).join()]);
+  return (
+    <nav className="section-menu">
+      {sections.map(([id, label]) => (
+        <button
+          key={id}
+          className={current === id ? "active" : ""}
+          onClick={() => document.getElementById(id)?.scrollIntoView({ behavior: "smooth", block: "start" })}
+        >
+          {label}
+        </button>
+      ))}
+    </nav>
   );
 }

@@ -11,7 +11,7 @@ import { generateArtCaption, generateArtLooks, translateArtText } from "../../li
 import { artCaptionPrompt, artLooksPrompt, artLookTrimPrompt, artNegativePrompt, artTranslatePrompt } from "../../lib/prompts";
 import { deleteArt, loadArt, saveArt } from "../../lib/storage";
 import { newId, sameName } from "../../lib/text";
-import { Section } from "../ui";
+import { Section, SectionMenu } from "../ui";
 import { ArtLayoutEditor, staleBox } from "./ArtLayout";
 
 export interface ArtControl {
@@ -691,9 +691,20 @@ export function ArtTab(props: { doc: Doc; settings: Settings; running: boolean; 
     );
   };
 
+  // 縦に長いので、左のメニューで各項目へ移動できるようにする
+  const sections: [string, string][] = [
+    ["art-setup", "画像生成の準備"],
+    ...ART_KIND_ORDER.map((kind): [string, string] => {
+      const n = art.items.filter((i) => i.kind === kind).length;
+      return [`art-${kind}`, n ? `${ART_KINDS[kind].label}(${n})` : ART_KINDS[kind].label];
+    }),
+  ];
+
   return (
-    <div className="stack">
-      <Section title="画像生成の準備">
+    <div className="info-layout">
+      <SectionMenu sections={sections} />
+      <div className="stack">
+      <Section id="art-setup" title="画像生成の準備">
         <div className="row wrap">
           <span className={models ? "muted small-text" : "error small-text"}>{status}</span>
           <button className="small" onClick={() => void check()}>
@@ -759,6 +770,7 @@ export function ArtTab(props: { doc: Doc; settings: Settings; running: boolean; 
         </p>
       </Section>
       {ART_KIND_ORDER.map(sectionOf)}
+      </div>
     </div>
   );
 }

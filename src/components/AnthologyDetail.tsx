@@ -14,7 +14,7 @@ import { ProductionTab } from "./tabs/ProductionTab";
 import { SceneBodyTab } from "./tabs/SceneBodyTab";
 import { BibleTab } from "./tabs/BibleTab";
 import { ExportTab } from "./tabs/ExportTab";
-import { BracketSelect, Field, RubyRulesEditor, Section } from "./ui";
+import { BracketSelect, Field, RubyRulesEditor, Section, SectionMenu } from "./ui";
 import { buildRubyRules } from "../lib/notation";
 import { CastEditor } from "./CastEditor";
 import {
@@ -963,39 +963,3 @@ function TitleField({ anthology: a, settings, onChange }: { anthology: Anthology
   );
 }
 
-/** 「連載の情報」タブの左に置く、各項目へ移動するメニュー。いま見ている項目を強調する */
-function SectionMenu({ sections }: { sections: [string, string][] }) {
-  const [current, setCurrent] = useState(sections[0]?.[0] ?? "");
-  useEffect(() => {
-    const main = document.querySelector(".main");
-    if (!main) return;
-    const onScroll = () => {
-      // 上端(固定表示のタブの下)を過ぎた最後の項目を、いま見ている項目とする
-      const top = main.getBoundingClientRect().top + 80;
-      let hit = sections[0]?.[0] ?? "";
-      for (const [id] of sections) {
-        const el = document.getElementById(id);
-        if (el && el.getBoundingClientRect().top <= top) hit = id;
-      }
-      // 一番下までスクロールしたら、最後の項目にする
-      if (main.scrollTop + main.clientHeight >= main.scrollHeight - 4) hit = sections[sections.length - 1]?.[0] ?? hit;
-      setCurrent(hit);
-    };
-    onScroll();
-    main.addEventListener("scroll", onScroll, { passive: true });
-    return () => main.removeEventListener("scroll", onScroll);
-  }, [sections.map(([id]) => id).join()]);
-  return (
-    <nav className="section-menu">
-      {sections.map(([id, label]) => (
-        <button
-          key={id}
-          className={current === id ? "active" : ""}
-          onClick={() => document.getElementById(id)?.scrollIntoView({ behavior: "smooth", block: "start" })}
-        >
-          {label}
-        </button>
-      ))}
-    </nav>
-  );
-}
