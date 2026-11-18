@@ -73,7 +73,8 @@ function ArtItemCard(props: {
   const k = ART_KINDS[item.kind];
   const [zoom, setZoom] = useState<ArtImage | null>(null);
   const [message, setMessage] = useState("");
-  const [count, setCount] = useState(1);
+  // 表紙や挿絵は何枚か作って選ぶので、既定は4枚(キャラクターシートは1枚)
+  const [count, setCount] = useState(item.kind === "sheet" ? 1 : 4);
   const docId = doc.id;
   const places = artPlaces(doc);
   const place = places.find((p) => p.key === item.place);
