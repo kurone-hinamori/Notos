@@ -141,10 +141,6 @@ export default function App() {
           <button className={view.name === "anthologies" || view.name === "anthology" ? "active" : ""} onClick={() => void go({ name: "anthologies" })}>
             📖 短編集の一覧
           </button>
-          <small className="nav-label" />
-          <button className={view.name === "settings" ? "active" : ""} onClick={() => void go({ name: "settings" })}>
-            ⚙ 設定
-          </button>
         </nav>
         {mgr.run.running && (
           <div className="side-run">
@@ -157,6 +153,12 @@ export default function App() {
             )}
           </div>
         )}
+        <div className="spacer" />
+        <nav>
+          <button className={view.name === "settings" ? "active" : ""} onClick={() => void go({ name: "settings" })}>
+            ⚙ 設定
+          </button>
+        </nav>
         <div className="side-model muted" title={settings.model}>
           {settings.model ? `モデル: ${settings.model}` : "モデル未選択"}
         </div>
