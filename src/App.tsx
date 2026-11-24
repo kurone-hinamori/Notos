@@ -1,6 +1,5 @@
 import { useEffect, useState } from "react";
 import { getVersion } from "@tauri-apps/api/app";
-import { getCurrentWindow } from "@tauri-apps/api/window";
 import type { Anthology, Settings, Story } from "./types";
 import { isAnthology } from "./types";
 import { duplicateAnthology as duplicateAnthologyDoc } from "./lib/anthology";
@@ -52,10 +51,11 @@ export default function App() {
     document.documentElement.style.setProperty("--body-font-size", `${settings.bodyFontSize}px`);
   }, [settings.bodyFontSize]);
 
-  // タイトルバーにバージョンを表示する
+  // バージョンは左のメニューの一番下に出す(Boreas・Euros と同じ)
+  const [version, setVersion] = useState("");
   useEffect(() => {
     getVersion()
-      .then((v) => getCurrentWindow().setTitle(`Notos v${v}`))
+      .then(setVersion)
       .catch(() => undefined);
   }, []);
 
@@ -116,32 +116,23 @@ export default function App() {
 
   const noModel = !settings.model;
 
+  /** 左のメニューの項目(Boreas・Euros と同じ形) */
+  const nav = (label: string, target: View, active: boolean) => (
+    <button className={`nav${active ? " active" : ""}`} onClick={() => void go(target)}>
+      {label}
+    </button>
+  );
+
   return (
     <div className="app">
-      <aside className="sidebar">
-        <div className="brand">
-          <span className="logo">物</span>
-          <div>
-            <strong>Notos</strong>
-            <small>物語を紡ぐ</small>
-          </div>
-        </div>
-        <nav>
-          <small className="nav-label">カクヨム連載</small>
-          <button className={view.name === "serials" || view.name === "serial" ? "active" : ""} onClick={() => void go({ name: "serials" })}>
-            📝 連載の一覧
-          </button>
-          <button className={view.name === "serial-new" ? "active" : ""} onClick={() => void go({ name: "serial-new" })}>
-            ✨ 新しい連載
-          </button>
-          <small className="nav-label">これまでの作品(閲覧)</small>
-          <button className={view.name === "list" || view.name === "detail" ? "active" : ""} onClick={() => void go({ name: "list" })}>
-            📚 長編の一覧
-          </button>
-          <button className={view.name === "anthologies" || view.name === "anthology" ? "active" : ""} onClick={() => void go({ name: "anthologies" })}>
-            📖 短編集の一覧
-          </button>
-        </nav>
+      <aside className="side">
+        <div className="brand">NOTOS</div>
+        <small className="nav-label">カクヨム連載</small>
+        {nav("連載の一覧", { name: "serials" }, view.name === "serials" || view.name === "serial")}
+        {nav("新しい連載", { name: "serial-new" }, view.name === "serial-new")}
+        <small className="nav-label">これまでの作品(閲覧)</small>
+        {nav("長編の一覧", { name: "list" }, view.name === "list" || view.name === "detail")}
+        {nav("短編集の一覧", { name: "anthologies" }, view.name === "anthologies" || view.name === "anthology")}
         {mgr.run.running && (
           <div className="side-run">
             <div className="running">● 生成中</div>
@@ -154,14 +145,8 @@ export default function App() {
           </div>
         )}
         <div className="spacer" />
-        <nav>
-          <button className={view.name === "settings" ? "active" : ""} onClick={() => void go({ name: "settings" })}>
-            ⚙ 設定
-          </button>
-        </nav>
-        <div className="side-model muted" title={settings.model}>
-          {settings.model ? `モデル: ${settings.model}` : "モデル未選択"}
-        </div>
+        {nav("設定", { name: "settings" }, view.name === "settings")}
+        {version && <div className="version">v{version}</div>}
       </aside>
 
       <main className="main">
