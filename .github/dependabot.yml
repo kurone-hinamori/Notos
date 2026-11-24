@@ -1,0 +1,7 @@
+# SHA で固定した Actions の更新を、毎週プルリクエストで知らせる
+version: 2
+updates:
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: weekly
